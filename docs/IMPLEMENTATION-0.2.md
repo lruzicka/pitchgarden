@@ -44,3 +44,8 @@ Phase B: per-source background jobs, immutable snapshots, clearing on invalidati
 reader shutdown before source edits, and endEditing reader recreation implemented.
 Core CTest 3/3 and full incremental VST3 build passed. The temporary generic editor
 will be replaced in D. The original demo supplies playback until D.
+Phase C: median segmentation with 70 ms minimum notes, 40 ms gap bridging,
+0.7 confidence, 0.9-semitone transition threshold, 120 ms transition hold and
+0.5-semitone candidate spread. All thresholds configurable. Note labels are
+rounded separately from continuous median pitch; raw frames remain unchanged.
+Core CTest 4/4 passed, including deterministic vibrato/slide cases; VST3 passed.

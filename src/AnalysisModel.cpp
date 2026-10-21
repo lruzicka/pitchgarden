@@ -21,6 +21,8 @@ void AnalysisModel::start(double sr, std::int64_t count, MonoReader read) {
             result->frames=analyzeSource(sr,count,read,{},&cancelled,[this](float p) {
                 std::lock_guard<std::mutex> guard(mutex); value.progress=p;
             });
+            if(cancelled.load()) return;
+            result->notes=segmentNotes(result->frames,256.0/sr);
             std::lock_guard<std::mutex> guard(mutex);
             if(!cancelled.load()) { value.result=std::move(result); value.state=AnalysisState::ready; value.progress=1; }
         } catch(const std::exception& e) {
