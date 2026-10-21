@@ -1,14 +1,18 @@
 cmake_minimum_required(VERSION 3.22)
-project(PitchGarden VERSION 0.1.0 LANGUAGES C CXX)
+project(PitchGarden VERSION 0.2.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Build the independently testable pitch estimator without downloading SDKs.
-add_library(pitchgarden_core STATIC src/PitchDetector.cpp)
+add_library(pitchgarden_core STATIC src/PitchDetector.cpp src/PitchAnalysis.cpp)
 target_include_directories(pitchgarden_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_executable(pitchgarden_pitch_test tests/pitch_test.cpp)
 target_link_libraries(pitchgarden_pitch_test PRIVATE pitchgarden_core)
+set_target_properties(pitchgarden_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_executable(pitchgarden_analysis_test tests/analysis_test.cpp)
+target_link_libraries(pitchgarden_analysis_test PRIVATE pitchgarden_core)
 enable_testing()
+add_test(NAME pitch_analysis COMMAND pitchgarden_analysis_test)
 add_test(NAME pitch_detector COMMAND pitchgarden_pitch_test)
 
 option(PITCHGARDEN_BUILD_PLUGIN "Build ARA VST3 bridge based on the official JUCE ARA demo" OFF)
@@ -36,10 +40,11 @@ if(PITCHGARDEN_BUILD_PLUGIN)
     IS_SYNTH FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
   juce_generate_juce_header(PitchGardenARA)
-  target_sources(PitchGardenARA PRIVATE src/ARAEntry.cpp)
+  target_sources(PitchGardenARA PRIVATE src/ARAEntry.cpp src/ARAAnalysisBridge.cpp)
   target_include_directories(PitchGardenARA PRIVATE "${JUCE_DIR}/examples/Plugins")
   target_compile_definitions(PitchGardenARA PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
   target_link_libraries(PitchGardenARA PRIVATE
+    pitchgarden_core
     juce::juce_audio_utils
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
