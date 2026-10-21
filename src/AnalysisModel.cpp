@@ -22,6 +22,8 @@ void AnalysisModel::start(double sr, std::int64_t count, MonoReader read) {
                 std::lock_guard<std::mutex> guard(mutex); value.progress=p;
             });
             if(cancelled.load()) return;
+            result->quality=classifyPitchQuality(result->frames,256.0/sr);
+            if(cancelled.load()) return;
             result->notes=segmentNotes(result->frames,256.0/sr);
             std::lock_guard<std::mutex> guard(mutex);
             if(!cancelled.load()) { value.result=std::move(result); value.state=AnalysisState::ready; value.progress=1; }
