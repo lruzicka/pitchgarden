@@ -23,6 +23,7 @@
 
 #pragma once
 #include "PitchGardenPlayback.h"
+#include "TransportState.h"
 
 class PitchGardenDocumentController final : public ARADocumentControllerSpecialisation,
                                                             private ProcessingLockInterface
@@ -133,37 +134,6 @@ private:
 };
 
 
-struct PlayHeadState
-{
-    void update (const Optional<AudioPlayHead::PositionInfo>& info)
-    {
-        if (info.hasValue())
-        {
-            isPlaying.store (info->getIsPlaying(), std::memory_order_relaxed);
-            timeInSeconds.store (info->getTimeInSeconds().orFallback (0), std::memory_order_relaxed);
-            isLooping.store (info->getIsLooping(), std::memory_order_relaxed);
-            const auto loopPoints = info->getLoopPoints();
-
-            if (loopPoints.hasValue())
-            {
-                loopPpqStart = loopPoints->ppqStart;
-                loopPpqEnd = loopPoints->ppqEnd;
-            }
-        }
-        else
-        {
-            isPlaying.store (false, std::memory_order_relaxed);
-            isLooping.store (false, std::memory_order_relaxed);
-        }
-    }
-
-    std::atomic<bool> isPlaying { false },
-                      isLooping { false };
-    std::atomic<double> timeInSeconds { 0.0 },
-                        loopPpqStart  { 0.0 },
-                        loopPpqEnd    { 0.0 };
-};
-
 //==============================================================================
 class PitchGardenProcessorBase : public AudioProcessor,
                                         private AudioProcessorARAExtension
@@ -179,13 +149,14 @@ public:
     //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override
     {
-        playHeadState.update (nullopt);
+        transport.publish({});
+        processingRate=sampleRate;
         prepareToPlayForARA (sampleRate, samplesPerBlock, getMainBusNumOutputChannels(), getProcessingPrecision());
     }
 
     void releaseResources() override
     {
-        playHeadState.update (nullopt);
+        transport.publish({});
         releaseResourcesForARA();
     }
 
@@ -205,9 +176,17 @@ public:
         ScopedNoDenormals noDenormals;
 
         auto* audioPlayHead = getPlayHead();
-        playHeadState.update (audioPlayHead != nullptr ? audioPlayHead->getPosition() : Optional<AudioPlayHead::PositionInfo>{});
+        const auto info=audioPlayHead != nullptr ? audioPlayHead->getPosition() : Optional<AudioPlayHead::PositionInfo>{};
+        pg::TransportSnapshot state;
+        if(info.hasValue()) {
+            const auto seconds=info->getTimeInSeconds(); const auto samples=info->getTimeInSamples();
+            state=pg::mapTransport(info->getIsPlaying(),info->getIsLooping(),
+                seconds.hasValue() ? std::optional<double>(seconds.orFallback(0)) : std::nullopt,
+                samples.hasValue() ? std::optional<std::int64_t>(samples.orFallback(0)) : std::nullopt,processingRate);
+        }
+        transport.publish(state);
 
-        if (! processBlockForARA (buffer, isRealtime(), audioPlayHead))
+        if (! processBlockForARA (buffer, isRealtime(), info.orFallback(AudioPlayHead::PositionInfo{})))
             processBlockBypassed (buffer, midiMessages);
     }
 
@@ -240,9 +219,10 @@ public:
 
     AudioProcessorARAExtension* getARAClientExtensions() override { return this; }
 
-    PlayHeadState playHeadState;
+    pg::TransportState transport;
 
 private:
+    double processingRate=0;
     //==============================================================================
     static BusesProperties getBusesProperties()
     {
@@ -261,10 +241,24 @@ class PitchGardenProcessorEditor final : public AudioProcessorEditor,
 public:
     explicit PitchGardenProcessorEditor(PitchGardenProcessorBase& processorIn)
         : AudioProcessorEditor(&processorIn),AudioProcessorEditorARAExtension(&processorIn),
-          piano([this] { return collect(); }) {
+          transport(processorIn.transport),piano([this] { return collect(); },[this] { return transport.read(); }) {
+        setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
         addAndMakeVisible(piano); setResizable(true,false); setResizeLimits(480,260,2400,1600); setSize(1000,560);
     }
     void resized() override { piano.setBounds(getLocalBounds()); }
+    bool keyPressed(const KeyPress& key) override {
+        if(key.getKeyCode()!=KeyPress::spaceKey || key.getModifiers().isAnyModifierKeyDown()) return false;
+        auto* view=getARAEditorView(); if(view==nullptr) return false;
+        auto* controller=view->getDocumentController()->getHostPlaybackController();
+        const auto state=transport.read(); if(controller==nullptr || !state.available) return false;
+        if(!spaceHeld) { if(state.playing) controller->requestStopPlayback(); else controller->requestStartPlayback(); }
+        spaceHeld=true; return true;
+    }
+    bool keyStateChanged(bool) override {
+        if(!KeyPress::isKeyCurrentlyDown(KeyPress::spaceKey)) spaceHeld=false;
+        return false;
+    }
+    void focusLost(FocusChangeType) override { spaceHeld=false; }
     AudioProcessorEditorARAExtension* getARAClientExtensions() override { return this; }
 private:
     std::vector<PitchRegionDisplay> collect() {
@@ -287,7 +281,9 @@ private:
         }
         return displays;
     }
+    pg::TransportState& transport;
     PitchEditor piano;
+    bool spaceHeld=false;
 };
 class PitchGardenProcessor final : public PitchGardenProcessorBase {
 public:

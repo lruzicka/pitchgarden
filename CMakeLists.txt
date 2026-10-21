@@ -22,7 +22,10 @@ add_executable(pitchgarden_playback_test tests/playback_test.cpp)
 target_link_libraries(pitchgarden_playback_test PRIVATE pitchgarden_core)
 add_executable(pitchgarden_render_gate_test tests/render_gate_test.cpp)
 target_link_libraries(pitchgarden_render_gate_test PRIVATE pitchgarden_core)
+add_executable(pitchgarden_transport_test tests/transport_test.cpp)
+target_link_libraries(pitchgarden_transport_test PRIVATE pitchgarden_core)
 enable_testing()
+add_test(NAME transport_mapping COMMAND pitchgarden_transport_test)
 add_test(NAME render_gate COMMAND pitchgarden_render_gate_test)
 add_test(NAME dry_playback COMMAND pitchgarden_playback_test)
 add_test(NAME note_segmentation COMMAND pitchgarden_segment_test)
@@ -52,6 +55,7 @@ if(PITCHGARDEN_BUILD_PLUGIN)
     IS_ARA_EFFECT TRUE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     IS_SYNTH FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
   juce_generate_juce_header(PitchGardenARA)
