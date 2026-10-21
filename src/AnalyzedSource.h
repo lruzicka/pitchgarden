@@ -1,6 +1,7 @@
 #pragma once
 #include "ARAAnalysisBridge.h"
 #include "AnalysisModel.h"
+#include "PlaybackCache.h"
 
 class AnalyzedSource final : public juce::ARAAudioSource,
                              private juce::ARAAudioSource::Listener {
@@ -9,14 +10,16 @@ public:
         : ARAAudioSource(document,hostRef) { addListener(this); }
     ~AnalyzedSource() override { stop(); removeListener(this); }
     void ensureAnalysis() { if(restartNeeded) { restartNeeded=false; start(); } }
+    PlaybackCache playback;
     pg::AnalysisSnapshot snapshot() const { return analysis.snapshot(); }
 private:
-    void stop() { analysis.cancel(); bridge.reset(); }
+    void stop() { analysis.cancel(); bridge.reset(); playback.reset(); }
     void start() {
         stop();
         if(!isSampleAccessEnabled()) return;
         try {
             bridge=std::make_unique<ARAAnalysisBridge>(this);
+            playback.configure(this);
             // Only the JUCE reader crosses the thread boundary, never the source.
             auto* reader=bridge.get();
             analysis.start(reader->sampleRate,reader->sampleCount,

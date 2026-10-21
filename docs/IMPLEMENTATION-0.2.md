@@ -49,3 +49,15 @@ Phase C: median segmentation with 70 ms minimum notes, 40 ms gap bridging,
 0.5-semitone candidate spread. All thresholds configurable. Note labels are
 rounded separately from continuous median pitch; raw frames remain unchanged.
 Core CTest 4/4 passed, including deterministic vibrato/slide cases; VST3 passed.
+Phase D: custom piano roll with visible-range binary searches, continuous curves,
+read-only note selection, pan/zoom and status; model values copied on the message
+thread without retaining ARA objects. Replaced demo dimming/playback with a
+bounded buffered dry renderer. Native-rate samples pass unchanged; source/host
+rate differences use linear sample-rate conversion. Unsupported stretch mappings
+are reported and leave host input intact. Default editor renderer is a no-op;
+the demo's loop audition is omitted because its source-rate mapping was incorrect.
+Core 5/5 and full plugin suite 6/6 passed. The in-process ARA host test checks
+sample-reader thread ownership, actual sample acquisition, detected notes, unity
+rendering at source/timeline offsets, moves, trims, stereo 96k replacement and
+reader cleanup. A generated editor image was inspected. Full VST3 build passed.
+This is not an interactive REAPER acceptance result.

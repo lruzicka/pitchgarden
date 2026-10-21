@@ -1,5 +1,4 @@
-// Temporary, functional ARA integration scaffold using JUCE's ISC-licensed demo.
-// No pitch editing is wired to the playback renderer yet.
+// Analysis-only ARA integration. Plugin identity remains compatible with 0.1.
 #include "JuceHeader.h"
 #include "PitchGardenARA.h"
 

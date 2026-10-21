@@ -18,7 +18,10 @@ add_executable(pitchgarden_analysis_test tests/analysis_test.cpp)
 target_link_libraries(pitchgarden_analysis_test PRIVATE pitchgarden_core)
 add_executable(pitchgarden_segment_test tests/segment_test.cpp)
 target_link_libraries(pitchgarden_segment_test PRIVATE pitchgarden_core)
+add_executable(pitchgarden_playback_test tests/playback_test.cpp)
+target_link_libraries(pitchgarden_playback_test PRIVATE pitchgarden_core)
 enable_testing()
+add_test(NAME dry_playback COMMAND pitchgarden_playback_test)
 add_test(NAME note_segmentation COMMAND pitchgarden_segment_test)
 add_test(NAME pitch_analysis COMMAND pitchgarden_analysis_test)
 add_test(NAME pitch_detector COMMAND pitchgarden_pitch_test)
@@ -48,12 +51,22 @@ if(PITCHGARDEN_BUILD_PLUGIN)
     IS_SYNTH FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
   juce_generate_juce_header(PitchGardenARA)
-  target_sources(PitchGardenARA PRIVATE src/ARAEntry.cpp src/ARAAnalysisBridge.cpp)
-  target_include_directories(PitchGardenARA PRIVATE "${JUCE_DIR}/examples/Plugins")
+  target_sources(PitchGardenARA PRIVATE src/ARAEntry.cpp src/ARAAnalysisBridge.cpp src/PitchEditor.cpp)
   target_compile_definitions(PitchGardenARA PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
   target_link_libraries(PitchGardenARA PRIVATE
     pitchgarden_core
     juce::juce_audio_utils
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+  option(PITCHGARDEN_BUILD_PLUGIN_TESTS "Build in-process ARA integration regression test" ON)
+  if(PITCHGARDEN_BUILD_PLUGIN_TESTS)
+    add_executable(pitchgarden_ara_test tests/ara_integration_test.cpp
+      "${JUCE_DIR}/modules/juce_audio_plugin_client/juce_audio_plugin_client_ARA.cpp")
+    target_include_directories(pitchgarden_ara_test PRIVATE
+      $<TARGET_PROPERTY:PitchGardenARA,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(pitchgarden_ara_test PRIVATE
+      $<TARGET_PROPERTY:PitchGardenARA,COMPILE_DEFINITIONS>)
+    target_link_libraries(pitchgarden_ara_test PRIVATE PitchGardenARA pitchgarden_core)
+    add_test(NAME ara_integration COMMAND pitchgarden_ara_test)
+  endif()
 endif()
