@@ -248,7 +248,7 @@ public:
         : AudioProcessorEditor(&processorIn),AudioProcessorEditorARAExtension(&processorIn),
           transport(processorIn.transport),audition(processorIn.auditionRenderer()),
           piano([this] { return collect(); },[this] { return transport.read(); },
-            {[this] { return audition!=nullptr; },
+            {[this] { return audition!=nullptr && audition->isPrepared(); },
              [this](const PitchRegionDisplay& region,const pg::Note& note) { return preview(region,note); },
              [this] { if(audition) audition->stop(); previewFailure={}; },
              [this] { return previewStatus(); }}) {
@@ -278,11 +278,12 @@ private:
         if(audition==nullptr || !region.supported || !interval || transport.read().playing) return false;
         previewRequestedAt=Time::getMillisecondCounterHiRes(); previewCallbacks=audition->callbackCount();
         const bool accepted=audition->submit({region.identity,region.sourceRevision,region.mapping,*interval});
-        if(!accepted) previewFailure="Audition unavailable: region not assigned to this ARA editor renderer";
+        if(!accepted) previewFailure=audition->isPrepared() ? "Audition unavailable: region not assigned to this ARA editor renderer" : "Audition unavailable: host renderer is not prepared";
         return accepted;
     }
     String previewStatus() const {
         if(audition==nullptr) return "Audition unavailable: host supplied no ARA editor-renderer role";
+        if(!audition->isPrepared()) return "Audition waiting for host editor-renderer preparation";
         if(previewFailure.isNotEmpty()) return previewFailure;
         switch(audition->getStatus()) {
             case NoteAuditionStatus::idle: return "Select a note, then Audition (original audio; host transport stays unchanged)";

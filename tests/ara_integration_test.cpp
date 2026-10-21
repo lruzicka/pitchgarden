@@ -2,6 +2,7 @@
 #include <ARA_Library/Dispatch/ARAHostDispatch.h>
 #include <ARA_Library/Dispatch/ARAHostDispatch.cpp>
 #include <chrono>
+#include <future>
 #include <iostream>
 #include <thread>
 #define CHECK(x) do { if(!(x)) { std::cerr << __LINE__ << ": " #x "\n"; std::abort(); } } while(false)
@@ -207,6 +208,30 @@ int main() {
         CHECK(previewProcessor.transport.read().projectSeconds==20);
         for(int i=0;i<10;++i) { fill(); previewProcessor.processBlock(audio,midi); }
         CHECK(preview->getStatus()==NoteAuditionStatus::finished);
+        {
+            // Suspend an audio callback after it observes the queued request,
+            // then stop from the model thread before allowing it to continue.
+            struct CoordinatedLock final : ProcessingLockInterface {
+                pg::RenderGate gate; std::promise<void> entered,release;
+                std::shared_future<void> proceed=release.get_future().share();
+                pg::RenderGate::ReadToken getProcessingLock() override { entered.set_value(); proceed.wait(); return gate.tryRead(); }
+            } coordinated;
+            auto entered=coordinated.entered.get_future();
+            PitchGardenAudition concurrent(source->getDocumentController(),coordinated);
+            concurrent.addPlaybackRegion(region);
+            concurrent.prepareToPlay(48000,512,2,juce::AudioProcessor::singlePrecision,juce::ARARenderer::AlwaysNonRealtime::no);
+            CHECK(concurrent.submit(request)); fill();
+            std::thread callback([&] { concurrent.processBlock(audio,juce::AudioProcessor::Realtime::yes,stopped); });
+            CHECK(entered.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+            std::promise<void> stopping; auto stopStarted=stopping.get_future();
+            auto stop=std::async(std::launch::async,[&] { stopping.set_value(); concurrent.stop(); });
+            stopStarted.wait();
+            CHECK(stop.wait_for(std::chrono::milliseconds(10))==std::future_status::timeout);
+            coordinated.release.set_value(); callback.join(); stop.get();
+            CHECK(concurrent.getStatus()==NoteAuditionStatus::idle);
+            fill(); concurrent.processBlock(audio,juce::AudioProcessor::Realtime::yes,stopped); unchanged();
+            concurrent.releaseResources(); CHECK(!concurrent.submit(request)); concurrent.removePlaybackRegion(region);
+        }
         preview->stop(); fill(); previewProcessor.processBlock(audio,midi); unchanged();
         CHECK(preview->submit(request)); playhead.position.setIsPlaying(true);
         fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::hostPlaying);
@@ -245,7 +270,20 @@ int main() {
     }
     // Render screenshot from the same immutable model without a live host GUI.
     PitchRegionDisplay display{"Stereo test",{12,.2,.5,.5},source->snapshot(),true};
-    PitchEditor editor([&] { return std::vector<PitchRegionDisplay>{display}; }); editor.setSize(1000,560);
+    PitchEditor editor([&] { return std::vector<PitchRegionDisplay>{display}; },[] { return pg::TransportSnapshot{12.2,true,true,true}; }); editor.setSize(1000,560);
+    juce::ToggleButton* follow=nullptr; juce::TextButton* fit=nullptr;
+    for(auto* child:editor.getChildren()) if(auto* button=dynamic_cast<juce::Button*>(child)) {
+        CHECK(!button->getWantsKeyboardFocus());
+        if(button->getButtonText()=="Follow") follow=dynamic_cast<juce::ToggleButton*>(button);
+        if(button->getButtonText()=="Fit") fit=dynamic_cast<juce::TextButton*>(button);
+    }
+    CHECK(follow!=nullptr && fit!=nullptr); CHECK(!follow->getToggleState());
+    follow->setToggleState(true,juce::dontSendNotification);
+    const juce::Point<float> mousePosition{500,300};
+    const juce::MouseEvent wheelEvent(juce::Desktop::getInstance().getMainMouseSource(),mousePosition,{},1,0,0,0,0,
+        &editor,&editor,{},mousePosition,{},1,false);
+    juce::MouseWheelDetails wheel; wheel.deltaY=.1f; editor.mouseWheelMove(wheelEvent,wheel);
+    CHECK(!follow->getToggleState()); fit->onClick();
     auto image=editor.createComponentSnapshot(editor.getLocalBounds());
     auto outputImage=juce::File::getCurrentWorkingDirectory().getChildFile("pitchgarden-piano-roll.png"); outputImage.deleteFile();
     if(auto stream=outputImage.createOutputStream()) juce::PNGImageFormat().writeImageToStream(image,*stream);
