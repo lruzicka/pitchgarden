@@ -81,7 +81,7 @@ int main() {
     {
         PitchGardenProcessor processor;
         processor.getARAClientExtensions()->bindToARA(instance->documentControllerRef,
-            ARA::kARAEditorViewRole,ARA::kARAEditorViewRole);
+            ARA::kARAPlaybackRendererRole|ARA::kARAEditorRendererRole|ARA::kARAEditorViewRole,ARA::kARAEditorViewRole);
         TestPlayHead playhead; playhead.position.setTimeInSeconds(12); processor.setPlayHead(&playhead);
         processor.prepareToPlay(48000,512);
         juce::AudioBuffer<float> audio(2,512); audio.clear(); juce::MidiBuffer midi; processor.processBlock(audio,midi);
@@ -177,6 +177,51 @@ int main() {
         renderer.processBlock(output,juce::AudioProcessor::Realtime::no,pos);
         CHECK(std::abs(output.getSample(0,10)-float(.6*std::sin(2*3.141592653589793*440*double(240010)/48000)))<1e-6);
         renderer.releaseResources(); renderer.removePlaybackRegion(region);
+    }
+    {
+        PitchGardenProcessor previewProcessor;
+        const auto roles=ARA::kARAEditorViewRole|ARA::kARAEditorRendererRole;
+        previewProcessor.getARAClientExtensions()->bindToARA(instance->documentControllerRef,ARA::kARAPlaybackRendererRole|ARA::kARAEditorRendererRole|ARA::kARAEditorViewRole,roles);
+        auto* preview=previewProcessor.auditionRenderer(); CHECK(preview!=nullptr);
+        auto* modelRegion=static_cast<PitchGardenRegion*>(ARA::PlugIn::fromRef(region));
+        const auto map=PitchGardenPlayback::mapping(*modelRegion);
+        const NoteAuditionRequest request{modelRegion->identity,source->revision.load(),map,{map.sourceStart,map.sourceStart+.1}};
+        CHECK(!preview->submit(request)); // host did not assign region yet
+        preview->addPlaybackRegion(region);
+        previewProcessor.prepareToPlay(48000,512);
+        TestPlayHead playhead; playhead.position.setTimeInSeconds(20); previewProcessor.setPlayHead(&playhead);
+        juce::AudioBuffer<float> audio(2,512),warm(2,4096); juce::MidiBuffer midi;
+        CHECK(source->playback.read(warm,4096,240000,5000));
+        const auto fill=[&] { for(int c=0;c<2;++c) for(int i=0;i<512;++i) audio.setSample(c,i,.123f); };
+        const auto unchanged=[&] { for(int c=0;c<2;++c) for(int i=0;i<512;++i) CHECK(audio.getSample(c,i)==.123f); };
+        const int starts=host.startRequests,stops=host.stopRequests,positions=host.positionRequests,cycles=host.cycleRequests;
+        CHECK(preview->submit(request));
+        juce::AudioPlayHead::PositionInfo stopped;
+        fill(); preview->processBlock(audio,juce::AudioProcessor::Realtime::no,stopped); unchanged();
+        CHECK(preview->getStatus()==NoteAuditionStatus::queued); // never preview during export
+        fill(); previewProcessor.processBlock(audio,midi);
+        CHECK(preview->getStatus()==NoteAuditionStatus::playing);
+        const double sampleTime=5+300.0/48000;
+        CHECK(std::abs(audio.getSample(0,300)-(.123f+float(.6*std::sin(2*3.141592653589793*440*sampleTime))))<1e-6);
+        CHECK(audio.getSample(0,0)==.123f); // preview-only attack ramp
+        CHECK(previewProcessor.transport.read().projectSeconds==20);
+        for(int i=0;i<10;++i) { fill(); previewProcessor.processBlock(audio,midi); }
+        CHECK(preview->getStatus()==NoteAuditionStatus::finished);
+        preview->stop(); fill(); previewProcessor.processBlock(audio,midi); unchanged();
+        CHECK(preview->submit(request)); playhead.position.setIsPlaying(true);
+        fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::hostPlaying);
+        playhead.position.setIsPlaying(false);
+        CHECK(preview->submit(request));
+        controller.beginEditing(); regionProps.startInPlaybackTime=21;
+        controller.updatePlaybackRegionProperties(region,&regionProps); controller.endEditing();
+        fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::invalid);
+        controller.beginEditing(); regionProps.startInPlaybackTime=20;
+        controller.updatePlaybackRegionProperties(region,&regionProps); controller.endEditing();
+        CHECK(preview->submit(request)); controller.enableAudioSourceSamplesAccess(ref,false);
+        fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::invalid);
+        CHECK(host.startRequests==starts && host.stopRequests==stops && host.positionRequests==positions && host.cycleRequests==cycles);
+        preview->removePlaybackRegion(region); CHECK(!preview->submit(request));
+        previewProcessor.releaseResources(); previewProcessor.setPlayHead(nullptr);
     }
     controller.enableAudioSourceSamplesAccess(ref,false);
     CHECK(!source->snapshot().result); CHECK(host.readers.load()==0);

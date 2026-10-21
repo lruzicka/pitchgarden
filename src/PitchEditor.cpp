@@ -4,13 +4,13 @@
 #include <limits>
 using namespace juce;
 namespace {
-constexpr int left=66,top=76,bottom=26;
+constexpr int left=66,top=100,bottom=26;
 String pitchName(int midi) {
     static const char* names[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
     return String(names[(midi%12+12)%12])+String(static_cast<int>(std::floor(midi/12.))-1);
 }
 bool same(const PitchRegionDisplay& a,const PitchRegionDisplay& b) {
-    return a.name==b.name && a.supported==b.supported && a.playbackUnavailable==b.playbackUnavailable && exactlyEqual(a.mapping.timelineStart,b.mapping.timelineStart)
+    return a.name==b.name && a.identity==b.identity && a.sourceRevision==b.sourceRevision && a.supported==b.supported && a.playbackUnavailable==b.playbackUnavailable && exactlyEqual(a.mapping.timelineStart,b.mapping.timelineStart)
         && exactlyEqual(a.mapping.sourceStart,b.mapping.sourceStart) && exactlyEqual(a.mapping.sourceDuration,b.mapping.sourceDuration)
         && exactlyEqual(a.mapping.playbackDuration,b.mapping.playbackDuration) && a.analysis.state==b.analysis.state
         && a.analysis.result==b.analysis.result && a.analysis.error==b.analysis.error
@@ -18,8 +18,18 @@ bool same(const PitchRegionDisplay& a,const PitchRegionDisplay& b) {
 }
 }
 PitchEditor::PitchEditor(std::function<std::vector<PitchRegionDisplay>()> fn,
-    std::function<pg::TransportSnapshot()> position) : collect(std::move(fn)),readTransport(std::move(position)) {
+    std::function<pg::TransportSnapshot()> position,PitchAuditionControls preview)
+    : collect(std::move(fn)),readTransport(std::move(position)),audition(std::move(preview)) {
     setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
+    for(auto* button:{&auditionButton,&stopAuditionButton}) {
+        addAndMakeVisible(button); button->setWantsKeyboardFocus(false); button->setMouseClickGrabsKeyboardFocus(false);
+    }
+    addAndMakeVisible(auditionStatus); auditionStatus.setFont(FontOptions(12.f));
+    auditionButton.onClick=[this] {
+        if(selectedRegion>=0 && selectedNote>=0 && audition.start)
+            audition.start(regions[std::size_t(selectedRegion)],regions[std::size_t(selectedRegion)].analysis.result->notes[std::size_t(selectedNote)]);
+    };
+    stopAuditionButton.onClick=[this] { if(audition.stop) audition.stop(); };
     addAndMakeVisible(followButton); followButton.setToggleState(false,dontSendNotification);
     followButton.setWantsKeyboardFocus(false); followButton.setMouseClickGrabsKeyboardFocus(false);
     followButton.setTooltip("Follow host playback. Manual scrolling/zoom suspends Follow.");
@@ -31,8 +41,8 @@ PitchEditor::PitchEditor(std::function<std::vector<PitchRegionDisplay>()> fn,
     startTimerHz(30); timerCallback();
 }
 void PitchEditor::resized() {
-    fitButton.setBounds(8,6,48,26); followButton.setBounds(62,6,78,26); help.setBounds(148,4,getWidth()-156,28);
-    status.setBounds(8,36,getWidth()-16,32);
+    fitButton.setBounds(8,6,48,26); followButton.setBounds(62,6,78,26); auditionButton.setBounds(142,6,76,26); stopAuditionButton.setBounds(224,6,100,26); help.setBounds(332,4,getWidth()-340,28);
+    status.setBounds(8,34,getWidth()-16,24); auditionStatus.setBounds(8,58,getWidth()-16,24);
 }
 float PitchEditor::x(double time) const { return float(left+(time-timeStart)/timeSpan*(getWidth()-left)); }
 float PitchEditor::y(double pitch) const { return float(getHeight()-bottom-(pitch-pitchLow)/pitchSpan*(getHeight()-top-bottom)); }
@@ -73,19 +83,25 @@ void PitchEditor::updateTransport() {
 }
 void PitchEditor::timerCallback() {
     updateTransport();
+    const bool previewAvailable=audition.available && audition.available();
+    auditionButton.setEnabled(previewAvailable && !transport.playing && selectedRegion>=0 && selectedNote>=0);
+    stopAuditionButton.setEnabled(previewAvailable);
+    const auto previewStatus=audition.status ? audition.status() : String("Audition unavailable: no ARA editor-renderer role");
+    auditionStatus.setText(previewStatus,dontSendNotification); auditionButton.setTooltip(previewStatus);
     auto next=collect(); bool changed=next.size()!=regions.size();
     if(!changed) for(std::size_t i=0;i<next.size();++i) if(!same(next[i],regions[i])) { changed=true; break; }
     if(!changed) return;
     bool refit=next.size()!=regions.size();
     if(!refit) for(std::size_t i=0;i<next.size();++i) {
         const auto& a=next[i]; const auto& b=regions[i];
-        if(a.name!=b.name || !exactlyEqual(a.mapping.timelineStart,b.mapping.timelineStart)
+        if(a.identity!=b.identity || a.sourceRevision!=b.sourceRevision || a.name!=b.name || !exactlyEqual(a.mapping.timelineStart,b.mapping.timelineStart)
             || !exactlyEqual(a.mapping.sourceStart,b.mapping.sourceStart)
             || !exactlyEqual(a.mapping.sourceDuration,b.mapping.sourceDuration)
             || (a.analysis.result && a.analysis.result!=b.analysis.result)) { refit=true; break; }
     }
     if(refit) fitted=false;
-    regions=std::move(next); selectedRegion=selectedNote=-1; detail={};
+    if(refit) { selectedRegion=selectedNote=-1; detail={}; }
+    regions=std::move(next);
     bool ready=false; String text=regions.empty() ? "Waiting for ARA audio source / region selection" : String{};
     for(auto& r:regions) {
         if(text.isNotEmpty()) text+="  |  ";

@@ -1,5 +1,6 @@
 #include "TransportState.h"
 #include "PitchAnalysis.h"
+#include "EditorCoordinates.h"
 #include <iostream>
 #include <limits>
 #include <thread>
@@ -18,6 +19,9 @@ int main() {
     CHECK(pg::followStart(0,10,{99,true,true,false},false)==0);
     CHECK(pg::followStart(0,10,{99,true,false,false},true)==0);
     pg::RegionMapping region{12,3,5,5};
+    const auto interval=pg::auditionInterval(region,1,4); CHECK(interval && interval->start==3 && interval->end==4);
+    CHECK(!pg::auditionInterval(region,0,2));
+    CHECK(!pg::auditionInterval({12,3,5,6},3,4));
     CHECK(region.toSource(13)==4); CHECK(region.toTimeline(4)==13);
     region.timelineStart=30; CHECK(region.toTimeline(4)==31); CHECK(region.toSource(31)==4);
     region.sourceStart=4; region.sourceDuration=region.playbackDuration=2;
