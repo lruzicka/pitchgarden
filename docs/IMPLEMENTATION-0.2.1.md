@@ -72,3 +72,10 @@ audio callback never acquires that mutex. Concurrent stop regression, exact host
 input preservation after stop, and GUI no-focus/Follow-suspend checks pass.
 Follow-up review found no important remaining gate/lifecycle defect. Full build
 and CTest 9/9 passed with the fixes. No third-party source or dependency pin changed.
+
+Final mapping check reproduced inherited playback failure when JUCE provides
+project seconds but no sample position: the old renderer incorrectly rendered
+at zero. Added tested, finite/overflow-checked project-seconds-to-samples fallback
+while preserving native integer sample positions. Missing coordinates retain
+host input rather than guessing zero. Source offsets remain applied only in
+region mapping. Full VST3 build and CTest 9/9 passed after the mapping fix.

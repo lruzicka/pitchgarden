@@ -1,6 +1,7 @@
 #pragma once
 #include "AnalyzedSource.h"
 #include "DryPlayback.h"
+#include "TransportState.h"
 struct ProcessingLockInterface {
     virtual ~ProcessingLockInterface()=default;
     virtual pg::RenderGate::ReadToken getProcessingLock()=0;
@@ -24,7 +25,12 @@ public:
         const auto count=output.getNumSamples();
         if(count>maxBlock || rate<=0) return true;
         if(!position.getIsPlaying()) { output.clear(); return true; }
-        const auto start=position.getTimeInSamples().orFallback(0);
+        const auto samplesPosition=position.getTimeInSamples(); const auto secondsPosition=position.getTimeInSeconds();
+        const auto projectStart=pg::projectSamplePosition(
+            samplesPosition.hasValue() ? std::optional<std::int64_t>(samplesPosition.orFallback(0)) : std::nullopt,
+            secondsPosition.hasValue() ? std::optional<double>(secondsPosition.orFallback(0)) : std::nullopt,rate);
+        if(!projectStart) return true; // no reliable coordinate: retain host input
+        const auto start=*projectStart;
         // Validate the whole block before replacing host audio. Unsupported
         // transformations keep the host signal; the editor reports the reason.
         for(auto* region:getPlaybackRegions()) {
