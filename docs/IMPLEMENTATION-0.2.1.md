@@ -61,3 +61,14 @@ their detected pitch as orange dots; low-confidence points are grey; no misleadi
 continuous line bridges octave-like discontinuities. Sustained octave notes,
 vibrato and continuous slides remain intact. Failing stub test observed before
 implementation; core tests 8/8 and full tests 9/9 passed; full VST3 build passed.
+
+Independent review found a Stop/editor-close race: an in-flight callback could
+publish audio/playing status after unsynchronized cancellation. Coordinated test
+reproduced stale playing against the old renderer. Stop now drains the bounded
+request read section on a non-RT thread; all status/sample publication checks the
+request gate. A non-RT mutex serializes GUI and host-lifecycle writers; scratch
+prepare/release use the same write gate and reject requests while inactive. The
+audio callback never acquires that mutex. Concurrent stop regression, exact host
+input preservation after stop, and GUI no-focus/Follow-suspend checks pass.
+Follow-up review found no important remaining gate/lifecycle defect. Full build
+and CTest 9/9 passed with the fixes. No third-party source or dependency pin changed.

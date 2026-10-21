@@ -2,6 +2,7 @@
 #include "PitchGardenPlayback.h"
 #include "PitchGardenRegion.h"
 #include "EditorCoordinates.h"
+#include <mutex>
 
 struct NoteAuditionRequest {
     std::uint64_t region=0,sourceRevision=0;
@@ -23,29 +24,46 @@ public:
             || !juce::exactlyEqual(range->end,next.interval.end)) return false;
         const auto guard=assignments.tryRead();
         if(!guard.isLocked() || findRegion(next.region)==nullptr) return false;
+        const std::lock_guard<std::mutex> writer(requestWriters);
         const pg::RenderGate::WriteToken write(requestGate);
+        if(!prepared.load()) return false;
         request=next; ++serial;
         status.store(NoteAuditionStatus::queued); enabled.store(true); return true;
     }
-    void stop() { enabled.store(false); status.store(NoteAuditionStatus::idle); }
+    // Message/model/lifecycle thread only: drain an in-flight preview block so
+    // neither samples nor a stale playing status can be published after return.
+    void stop() {
+        const std::lock_guard<std::mutex> writer(requestWriters);
+        const pg::RenderGate::WriteToken write(requestGate);
+        enabled.store(false); status.store(NoteAuditionStatus::idle);
+    }
+    bool isPrepared() const { return prepared.load(); }
     NoteAuditionStatus getStatus() const { return status.load(); }
     std::uint64_t callbackCount() const { return callbacks.load(); }
     void prepareToPlay(double sampleRate,int maximum,int,juce::AudioProcessor::ProcessingPrecision,
                        AlwaysNonRealtime) override {
+        const std::lock_guard<std::mutex> writer(requestWriters);
+        const pg::RenderGate::WriteToken write(requestGate);
+        prepared.store(false); enabled.store(false); status.store(NoteAuditionStatus::idle);
         rate=sampleRate; maximumBlock=maximum;
         samples.setSize(2,static_cast<int>(std::ceil(maximum*384000.0/sampleRate))+4);
-        lastSerial=0; cursor=0;
+        lastSerial=0; cursor=0; prepared.store(true);
     }
-    void releaseResources() override { stop(); samples.setSize(0,0); rate=0; }
+    void releaseResources() override {
+        const std::lock_guard<std::mutex> writer(requestWriters);
+        const pg::RenderGate::WriteToken write(requestGate);
+        prepared.store(false); enabled.store(false); status.store(NoteAuditionStatus::idle);
+        samples.setSize(0,0); rate=0;
+    }
     bool processBlock(juce::AudioBuffer<float>& output,juce::AudioProcessor::Realtime realtime,
                       const juce::AudioPlayHead::PositionInfo& position) noexcept override {
         if(realtime==juce::AudioProcessor::Realtime::no) return true;
         callbacks.fetch_add(1);
         if(!enabled.load()) return true;
+        const auto read=requestGate.tryRead(); if(!read.isLocked() || !enabled.load()) return true;
         if(position.getIsPlaying()) { enabled.store(false); status.store(NoteAuditionStatus::hostPlaying); return true; }
         const auto model=lock.getProcessingLock(); if(!model.isLocked()) return true;
         const auto assigned=assignments.tryRead(); if(!assigned.isLocked()) return true;
-        const auto read=requestGate.tryRead(); if(!read.isLocked()) return true;
         auto* region=findRegion(request.region);
         if(region==nullptr || !sameMapping(PitchGardenPlayback::mapping(*region),request.mapping)
             || region->isTimestretchEnabled() || region->isTimeStretchReflectingTempo()) { invalidate(); return true; }
@@ -104,11 +122,14 @@ private:
     void didRemoveRegionSequence(ARA::PlugIn::RegionSequence*) noexcept override { assignments.endWrite(); }
     ProcessingLockInterface& lock;
     pg::RenderGate assignments,requestGate;
+    // GUI and host lifecycle callers can differ. Serialize non-RT writers only;
+    // processBlock never touches this mutex and only tries the atomic read gate.
+    std::mutex requestWriters;
     NoteAuditionRequest request;
     std::uint64_t serial=0,lastSerial=0;
     juce::int64 cursor=0;
     std::atomic<std::uint64_t> callbacks{0};
-    std::atomic<bool> enabled{false};
+    std::atomic<bool> enabled{false},prepared{false};
     std::atomic<NoteAuditionStatus> status{NoteAuditionStatus::idle};
     juce::AudioBuffer<float> samples;
     double rate=0;
