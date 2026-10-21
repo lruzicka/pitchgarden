@@ -1,12 +1,15 @@
-# PitchGarden 0.2.0
+# PitchGarden 0.2.1
 
 Analysis-only monophonic pitch visualization for Linux ARA VST3 hosts. Recorded
 ARA source samples feed the existing YIN detector on background workers. A piano
 roll shows read-only note candidates and the original continuous pitch trajectory.
-There is no pitch correction, transposition, or timing editing.
+There is no pitch correction, transposition, or timing editing. Version 0.2.1 adds
+transport visualization, optional Follow, host-compatible Space handling,
+optional ARA original-note audition, and pitch-uncertainty annotations.
 
 **Build and automated ARA integration tests pass on Fedora. Interactive REAPER
-acceptance is NOT VERIFIED. Milestone 0.2's host acceptance gate remains open.**
+acceptance of the new 0.2.1 features is NOT VERIFIED. The live host acceptance
+gate remains open. The user reports the existing 0.2 note display/navigation work.**
 
 ## Dependencies and build
 
@@ -68,14 +71,59 @@ Source offsets and current region timeline positions determine visualization.
 - Wheel: scroll time. Shift + wheel: scroll pitch.
 - Ctrl + wheel: zoom time around the cursor. Ctrl + Shift + wheel: zoom pitch.
 - **Fit**: fit displayed regions and detected pitches.
+- **Follow**: keep the playback cursor visible while REAPER plays. Defaults off;
+  wheel scrolling/zoom and Fit suspend it. Re-enable explicitly to resume.
+- The yellow playback cursor and orange stopped cursor use REAPER project seconds,
+  separately from source-relative pitch data. Seeking/loop jumps use new host
+  positions directly. No position is invented when host callbacks stop.
+- **Audition**: play the selected note's original source interval once through the
+  optional ARA editor renderer, while host playback is stopped. **Stop preview**
+  stops it. The preview does not seek REAPER, start track playback, change loop
+  ranges, or modify the track renderer. The visible item clips the note interval.
+- Space is left available to host keyboard routing. If Space reaches the editor
+  and an ARA playback controller is provided, the editor requests host play/stop.
+  Repeated key-downs are suppressed. Controls do not grab keyboard focus.
 - Click a note: select it and show continuous MIDI pitch, cents, frequency, and quality.
 - Rectangles sit on the representative note row; the white curve retains the
-  original pitch, including deviations above and below that row.
+  original pitch, including deviations above and below that row. Orange dots
+  indicate brief octave-like uncertainty; grey dots indicate low confidence.
+  Raw detected values remain unchanged.
 
 The status shows waiting, progress, ready/no stable notes, read errors, and
 unsupported mappings. Results are in memory and recomputed after reopening a
 project. The legacy demo archive format is still readable; legacy dim flags are
 ignored. No editable note state is saved.
+
+## Transport, keyboard and audition limitations
+
+Transport is published from JUCE's audio callback, using finite project seconds
+or sample-position/sample-rate fallback. Playback also accepts seconds-only
+contexts rather than assuming timeline zero. The GUI never calls AudioPlayHead from
+its timer and does not extrapolate a stale position. A host that stops supplying
+audio callbacks while stopped cannot update stopped seeks through this path;
+ARA's optional playback controller provides requests, not position notifications.
+This must be checked with REAPER's actual processing/suspension settings.
+
+Keyboard focus uses JUCE's `EDITOR_WANTS_KEYBOARD_FOCUS FALSE` plus non-grabbing
+editor/control settings. Space requests, when handled, use the optional ARA host
+playback controller on the message thread. The host may ignore requests. If the
+interface or a transport snapshot is absent, Space is not consumed. REAPER's
+per-FX keyboard-routing setting and embedded/floating editors require live checks;
+there are no global hooks or synthetic platform keyboard events.
+
+Audition requires the host to assign the ARA editor-renderer role **and** the
+selected region/sequence and to call that renderer while stopped. Role absence,
+unassigned regions, cache waits and missing stopped callbacks are shown in the
+editor. Role presence alone is not proof that audition works in REAPER. There is
+no ARA request to wake a suspended editor renderer, and the plugin does not start
+host transport to work around that limitation. Preview streams bounded cached
+blocks, uses 5 ms preview-only boundary fades, never waits for samples in the audio
+callback, and cancels on host playback, item/source edits or editor close. It does
+not preview during offline exports.
+
+See [the 0.2.1 REAPER procedure](docs/REAPER-ACCEPTANCE-0.2.1.md) and
+[the stabilization record](docs/IMPLEMENTATION-0.2.1.md), and
+[the verification report](docs/COMPLETION-0.2.1.md).
 
 ## Implementation
 
@@ -88,7 +136,10 @@ ignored. No editable note state is saved.
 | `AnalyzedSource.h` | Source lifecycle, invalidation, reader ownership and reanalysis |
 | `NoteSegmenter.*` | Independent conservative median-based note segmentation |
 | `PitchGardenPlayback.h`, `PlaybackCache.h`, `DryPlayback.h` | Buffered dry rendering and region mapping |
-| `PitchEditor.*` | Visible-range piano roll, curves, navigation and selection |
+| `PitchEditor.*` | Piano roll, transport cursor, navigation, Follow, selection and preview controls |
+| `TransportState.h`, `EditorCoordinates.h` | Atomic host transport snapshots and testable source/project interval mapping |
+| `PitchGardenAudition.h`, `PitchGardenRegion.h` | Optional ARA preview renderer and stable region identity |
+| `PitchQuality.*` | Non-destructive pitch uncertainty annotations |
 | `PitchGardenARA.h`, `ARAEntry.cpp` | Document controller, processor, editor binding and legacy archive compatibility |
 
 Default analysis: 2048-sample window, 256-sample hop, 65–1200 Hz, YIN threshold
@@ -97,6 +148,16 @@ when needed (notably at 96 kHz); this prevents truncating the lowest YIN lags.
 Frames are timestamped at window centers. Incomplete trailing windows are omitted.
 The stereo analysis signal is the arithmetic channel average; opposite-polarity
 channels can cancel and are a known limitation.
+
+YIN can choose an octave harmonic even with high confidence: a synthetic 110 Hz
+fundamental at amplitude 0.01 plus its 220 Hz harmonic at 0.8 produced about
+220.004 Hz with confidence 0.99967. This demonstrates ambiguity, not a diagnosis
+of a particular vocal recording. The quality classifier marks excursions near
+one/two octaves lasting at most 80 ms only when stable, confident neighboring
+pitch returns. A tolerance of 0.65 semitones handles detector jitter. It does not
+rewrite pitch or feed corrected data to segmentation. Sustained octave changes,
+vibrato and portamento remain raw. Some intentional short octave ornaments may
+be marked uncertain; persistent octave mistakes cannot be resolved this way.
 
 Default segmentation: 70 ms minimum duration, 40 ms maximum bridged gap,
 0.7 minimum confidence, 0.9-semitone transition threshold, 120 ms persistence,
@@ -130,22 +191,26 @@ received, unsupported transformations, nonmatching region durations, and invalid
 mapping coordinates produce an unavailable status; curves are withheld and host
 input is retained. That fallback does not guarantee playback in every ARA host.
 Regions outside the source's supported mapping cannot be silently displayed as
-correct. The demo's loop audition is omitted because its rate mapping was not
-robust. Normal host transport playback is supported by the dry renderer.
+correct. The old demo loop audition is replaced by the bounded optional editor-renderer
+preview described above. Normal host playback still uses the dry renderer.
 
 ## Verification
 
-Six standalone CTest tests cover detector reference frequencies/sample rates,
+Eight standalone CTest tests cover detector reference frequencies/sample rates,
 silence, bad input, conversions/time mapping, note segmentation, cancellation,
-publication, shutdown, and unity sample conversion. A seventh optional test creates
+publication, shutdown, and unity sample conversion. A ninth optional test creates
 an in-process ARA host and exercises real source-reader callbacks, source
 analysis, region offsets, dry rendering, moves/trims, stereo 96 kHz replacement,
 reader cleanup, nonblocking cache misses with blocked host I/O, and 96-to-48 kHz
-rendering. It also writes `pitchgarden-piano-roll.png` in its working
+rendering. Stabilization tests additionally cover transport snapshots, loop/seek/
+stop mapping, Follow decisions, transient octave flags, optional-role behavior,
+Space host requests, add-only original-note preview, finish/stop, cancellation,
+no offline audition and no host seek/cycle changes. It also writes `pitchgarden-piano-roll.png` in its working
 directory for inspection. This is not REAPER compatibility certification.
 
-Follow [the Fedora/REAPER acceptance procedure](docs/REAPER-ACCEPTANCE.md) before
-calling the milestone complete. The implementation record is in
+Follow [the 0.2.1 REAPER acceptance procedure](docs/REAPER-ACCEPTANCE-0.2.1.md) before
+calling this stabilization milestone complete. The [0.2 checklist](docs/REAPER-ACCEPTANCE.md)
+remains available for baseline playback/analysis checks. The implementation record is in
 [IMPLEMENTATION-0.2.md](docs/IMPLEMENTATION-0.2.md).
 
 ## Licensing
