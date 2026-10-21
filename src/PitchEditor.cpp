@@ -112,11 +112,14 @@ void PitchEditor::timerCallback() {
             case pg::AnalysisState::waiting: text+="Waiting for source samples"; break;
             case pg::AnalysisState::analyzing: text+="Analyzing "+String(int(r.analysis.progress*100))+"%"; break;
             case pg::AnalysisState::failed: text+="Failed: "+String(r.analysis.error); break;
-            case pg::AnalysisState::ready:
+            case pg::AnalysisState::ready: {
                 ready=true;
                 text+=String(int(r.analysis.result->notes.size()))+" source notes";
+                const auto uncertain=std::count(r.analysis.result->quality.begin(),r.analysis.result->quality.end(),pg::PitchQuality::octaveExcursion);
+                if(uncertain>0) text+="; "+String(int(uncertain))+" octave-uncertain frames (orange dots)";
                 if(r.analysis.result->notes.empty()) text+=" (no stable voiced notes)";
                 break;
+            }
         }
     }
     status.setText(text,dontSendNotification);
@@ -163,12 +166,23 @@ void PitchEditor::paint(Graphics& g) {
             }
             auto frame=std::lower_bound(result.frames.begin(),result.frames.end(),sourceBegin,[](auto& f,double t) { return f.seconds<t; });
             if(frame!=result.frames.begin()) --frame;
-            Path curve; bool pen=false;
+            Path curve; bool pen=false; double previousPitch=0;
             for(;frame!=result.frames.end() && frame->seconds<=sourceEnd;++frame) {
+                const auto index=static_cast<std::size_t>(frame-result.frames.begin());
+                const auto quality=index<result.quality.size() ? result.quality[index]
+                    : (frame->pitch.confidence>=.7 ? pg::PitchQuality::reliable : pg::PitchQuality::lowConfidence);
                 if(frame->seconds<sourceBegin || !frame->pitch.voiced || !std::isfinite(frame->pitch.midi)) { pen=false; continue; }
                 const auto px=x(r.mapping.toTimeline(frame->seconds)),py=y(frame->pitch.midi);
-                if(pen) curve.lineTo(px,py); else curve.startNewSubPath(px,py);
-                pen=true;
+                if(quality!=pg::PitchQuality::reliable) {
+                    // Keep the detected pitch visible, but do not imply a continuous,
+                    // certain trajectory through a short octave-like excursion.
+                    pen=false;
+                    g.setColour(quality==pg::PitchQuality::octaveExcursion ? Colours::orange : Colours::grey);
+                    g.fillEllipse(px-1.5f,py-1.5f,3.f,3.f); continue;
+                }
+                if(pen && std::abs(frame->pitch.midi-previousPitch)<7) curve.lineTo(px,py);
+                else curve.startNewSubPath(px,py);
+                previousPitch=frame->pitch.midi; pen=true;
             }
             g.setColour(Colours::white); g.strokePath(curve,PathStrokeType(1.4f));
         }

@@ -48,3 +48,16 @@ original samples, preview finish/stop, no export preview, host-play cancellation
 movement/invalidation and unchanged host transport request counts. Full build
 and CTest 8/8 passed. The test host's known-role mask must include all three ARA
 roles; unknown roles are treated as enabled for backward compatibility.
+
+Octave investigation: deterministic 110 Hz fundamental + 220 Hz second harmonic
+at amplitudes 0.01/0.8 yields approximately 220.004 Hz with 0.99967 confidence;
+raising the fundamental to 0.4 yields 110 Hz. YIN confidence alone cannot establish
+the intended fundamental. No user vocal recording was available for diagnosis.
+Added value-only quality annotations: reliable, unvoiced, low confidence, and
+brief octave excursion. A return within 80 ms to a confident stable neighborhood
+is required, with 0.65-semitone octave tolerance. No correction/filter rewrites
+raw frequency, confidence, MIDI or note segmentation. Suspect points remain at
+their detected pitch as orange dots; low-confidence points are grey; no misleading
+continuous line bridges octave-like discontinuities. Sustained octave notes,
+vibrato and continuous slides remain intact. Failing stub test observed before
+implementation; core tests 8/8 and full tests 9/9 passed; full VST3 build passed.

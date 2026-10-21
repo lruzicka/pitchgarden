@@ -1,13 +1,14 @@
 #pragma once
 #include "PitchAnalysis.h"
 #include "NoteSegmenter.h"
+#include "PitchQuality.h"
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 namespace pg {
 enum class AnalysisState { waiting, analyzing, ready, failed };
-struct AnalysisResult { double sampleRate=0; std::vector<PitchFrame> frames; std::vector<Note> notes; };
+struct AnalysisResult { double sampleRate=0; std::vector<PitchFrame> frames; std::vector<Note> notes; std::vector<PitchQuality> quality; };
 struct AnalysisSnapshot {
     AnalysisState state=AnalysisState::waiting;
     float progress=0;
