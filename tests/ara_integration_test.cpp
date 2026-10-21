@@ -6,8 +6,14 @@
 #include <thread>
 #define CHECK(x) do { if(!(x)) { std::cerr << __LINE__ << ": " #x "\n"; std::abort(); } } while(false)
 struct TestAudioData { double rate=48000; int channels=1; double hz=440; double duration=10; };
-class Host final : public ARA::Host::AudioAccessControllerInterface,public ARA::Host::ArchivingControllerInterface {
+class Host final : public ARA::Host::AudioAccessControllerInterface,public ARA::Host::ArchivingControllerInterface,public ARA::Host::PlaybackControllerInterface {
 public:
+    int startRequests=0,stopRequests=0,positionRequests=0,cycleRequests=0;
+    void requestStartPlayback() noexcept override { CHECK(std::this_thread::get_id()==modelThread); ++startRequests; }
+    void requestStopPlayback() noexcept override { CHECK(std::this_thread::get_id()==modelThread); ++stopRequests; }
+    void requestSetPlaybackPosition(ARA::ARATimePosition) noexcept override { ++positionRequests; }
+    void requestSetCycleRange(ARA::ARATimePosition,ARA::ARATimeDuration) noexcept override { ++cycleRequests; }
+    void requestEnableCycle(bool) noexcept override { ++cycleRequests; }
     const std::thread::id modelThread=std::this_thread::get_id();
     std::atomic<int> readers{0},reads{0};
     std::atomic<bool> blockReads{false},readBlocked{false};
@@ -33,6 +39,11 @@ public:
     void notifyDocumentUnarchivingProgress(float) noexcept override {}
     ARA::ARAPersistentID getDocumentArchiveID(ARA::ARAArchiveReaderHostRef) noexcept override { return "test"; }
 };
+class TestPlayHead final : public juce::AudioPlayHead {
+public:
+    juce::AudioPlayHead::PositionInfo position;
+    juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override { return position; }
+};
 bool wait(AnalyzedSource& source) {
     const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(10);
     while(source.snapshot().state==pg::AnalysisState::analyzing && std::chrono::steady_clock::now()<until) std::this_thread::yield();
@@ -47,17 +58,46 @@ int main() {
         for(int c=0;c<2;++c) for(int i=0;i<512;++i) dry.setSample(c,i,.123f);
         processor.processBlock(dry,midi);
         for(int c=0;c<2;++c) for(int i=0;i<512;++i) CHECK(dry.getSample(c,i)==.123f);
-        processor.releaseResources();
+        CHECK(!processor.transport.read().available);
+        TestPlayHead playhead; processor.setPlayHead(&playhead);
+        for(double seconds : {12.,13.,3.,4.}) {
+            playhead.position.setTimeInSeconds(seconds); playhead.position.setIsPlaying(true); playhead.position.setIsLooping(true);
+            processor.processBlock(dry,midi); const auto snapshot=processor.transport.read();
+            CHECK(snapshot.available && snapshot.playing && snapshot.looping && snapshot.projectSeconds==seconds);
+        }
+        playhead.position.setTimeInSeconds(2); playhead.position.setIsPlaying(false);
+        processor.processBlock(dry,midi); CHECK(!processor.transport.read().playing && processor.transport.read().projectSeconds==2);
+        processor.setPlayHead(nullptr); processor.releaseResources();
     }
     auto* factory=juce::ARADocumentControllerSpecialisation::createARAFactory<PitchGardenDocumentController>();
     ARA::ARAAssertFunction assertFunction=nullptr;
     ARA::ARAInterfaceConfiguration config{sizeof(config),ARA::kARAAPIGeneration_2_0_Final,&assertFunction};
     factory->initializeARAWithConfiguration(&config);
     Host host;
-    ARA::Host::DocumentControllerHostInstance hostInstance(&host,&host);
+    ARA::Host::DocumentControllerHostInstance hostInstance(&host,&host,nullptr,nullptr,&host);
     ARA::ARADocumentProperties document{sizeof(document),"Test document"};
     const auto* instance=factory->createDocumentControllerWithDocument(&hostInstance,&document);
     ARA::Host::DocumentController controller(instance);
+    {
+        PitchGardenProcessor processor;
+        processor.getARAClientExtensions()->bindToARA(instance->documentControllerRef,
+            ARA::kARAEditorViewRole,ARA::kARAEditorViewRole);
+        TestPlayHead playhead; playhead.position.setTimeInSeconds(12); processor.setPlayHead(&playhead);
+        processor.prepareToPlay(48000,512);
+        juce::AudioBuffer<float> audio(2,512); audio.clear(); juce::MidiBuffer midi; processor.processBlock(audio,midi);
+        {
+            PitchGardenProcessorEditor editor(processor);
+            CHECK(!editor.getWantsKeyboardFocus());
+            CHECK(editor.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey))); CHECK(host.startRequests==1);
+            CHECK(editor.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey))); CHECK(host.startRequests==1);
+            editor.keyStateChanged(false);
+            playhead.position.setIsPlaying(true); processor.processBlock(audio,midi);
+            CHECK(editor.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey))); CHECK(host.stopRequests==1);
+            CHECK(!editor.keyPressed(juce::KeyPress('x')));
+            CHECK(host.positionRequests==0 && host.cycleRequests==0);
+        }
+        processor.releaseResources(); processor.setPlayHead(nullptr);
+    }
     TestAudioData sourceData;
     controller.beginEditing();
     ARA::ARAMusicalContextProperties contextProperties{}; contextProperties.structSize=sizeof(contextProperties); contextProperties.name="Context";

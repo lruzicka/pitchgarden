@@ -17,15 +17,21 @@ bool same(const PitchRegionDisplay& a,const PitchRegionDisplay& b) {
         && int(a.analysis.progress*100)==int(b.analysis.progress*100);
 }
 }
-PitchEditor::PitchEditor(std::function<std::vector<PitchRegionDisplay>()> fn) : collect(std::move(fn)) {
-    addAndMakeVisible(fitButton); fitButton.onClick=[this] { fit(); repaint(); };
+PitchEditor::PitchEditor(std::function<std::vector<PitchRegionDisplay>()> fn,
+    std::function<pg::TransportSnapshot()> position) : collect(std::move(fn)),readTransport(std::move(position)) {
+    setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
+    addAndMakeVisible(followButton); followButton.setToggleState(false,dontSendNotification);
+    followButton.setWantsKeyboardFocus(false); followButton.setMouseClickGrabsKeyboardFocus(false);
+    followButton.setTooltip("Follow host playback. Manual scrolling/zoom suspends Follow.");
+    fitButton.setWantsKeyboardFocus(false); fitButton.setMouseClickGrabsKeyboardFocus(false);
+    addAndMakeVisible(fitButton); fitButton.onClick=[this] { suspendFollow(); fit(); repaint(); };
     addAndMakeVisible(help); help.setText("Wheel: time  |  Shift: pitch  |  Ctrl: time zoom  |  Ctrl+Shift: pitch zoom  |  Click: select",dontSendNotification);
     help.setFont(FontOptions(12.f));
     addAndMakeVisible(status); status.setFont(FontOptions(13.f));
-    startTimerHz(10); timerCallback();
+    startTimerHz(30); timerCallback();
 }
 void PitchEditor::resized() {
-    fitButton.setBounds(8,6,48,26); help.setBounds(66,4,getWidth()-74,28);
+    fitButton.setBounds(8,6,48,26); followButton.setBounds(62,6,78,26); help.setBounds(148,4,getWidth()-156,28);
     status.setBounds(8,36,getWidth()-16,32);
 }
 float PitchEditor::x(double time) const { return float(left+(time-timeStart)/timeSpan*(getWidth()-left)); }
@@ -50,7 +56,23 @@ void PitchEditor::fit() {
     if(std::isfinite(begin) && end>begin) { timeStart=begin-.05; timeSpan=std::max(.2,end-begin+.1); }
     if(high>=low) { pitchLow=std::floor(low)-3; pitchSpan=std::max(12.,std::ceil(high)-pitchLow+3); }
 }
+void PitchEditor::suspendFollow() { followButton.setToggleState(false,dontSendNotification); }
+void PitchEditor::updateTransport() {
+    const auto next=readTransport ? readTransport() : pg::TransportSnapshot{};
+    const auto old=transport; transport=next;
+    const double followed=pg::followStart(timeStart,timeSpan,transport,followButton.getToggleState());
+    if(!exactlyEqual(followed,timeStart)) { timeStart=followed; repaint(); return; }
+    if(old.available==next.available && old.playing==next.playing && old.looping==next.looping
+        && exactlyEqual(old.projectSeconds,next.projectSeconds)) return;
+    const auto repaintCursor=[this](const pg::TransportSnapshot& state) {
+        if(!state.available || state.projectSeconds<timeStart || state.projectSeconds>timeStart+timeSpan) return;
+        repaint(int(x(state.projectSeconds))-5,top-20,11,getHeight()-top-bottom+20);
+    };
+    repaintCursor(old); repaintCursor(next);
+    repaint(0,getHeight()-bottom,getWidth(),bottom);
+}
 void PitchEditor::timerCallback() {
+    updateTransport();
     auto next=collect(); bool changed=next.size()!=regions.size();
     if(!changed) for(std::size_t i=0;i<next.size();++i) if(!same(next[i],regions[i])) { changed=true; break; }
     if(!changed) return;
@@ -135,9 +157,16 @@ void PitchEditor::paint(Graphics& g) {
             g.setColour(Colours::white); g.strokePath(curve,PathStrokeType(1.4f));
         }
     }
+    if(transport.available && transport.projectSeconds>=timeStart && transport.projectSeconds<=timeStart+timeSpan) {
+        const float cursorX=x(transport.projectSeconds);
+        g.setColour(transport.playing ? Colours::yellow : Colours::orange);
+        g.drawVerticalLine(int(cursorX),float(top),float(getHeight()-bottom));
+        Path marker; marker.addTriangle(cursorX-4,float(top-5),cursorX+4,float(top-5),cursorX,float(top)); g.fillPath(marker);
+    }
     g.setColour(Colours::lightgrey);
+    const String transportText=transport.available ? (transport.playing ? "Playing " : "Stopped ")+String(transport.projectSeconds,3)+" s"+(transport.looping ? " (loop)" : "") : "Host position unavailable";
     const String ranges="Time "+String(timeStart,2)+"–"+String(timeStart+timeSpan,2)+" s   |   MIDI "+String(pitchLow,1)+"–"+String(pitchLow+pitchSpan,1);
-    g.drawText(detail.isNotEmpty() ? detail+"   |   "+ranges : ranges,8,getHeight()-bottom+3,getWidth()-16,bottom-4,Justification::left);
+    g.drawText(transportText+"   |   "+(detail.isNotEmpty() ? detail+"   |   "+ranges : ranges),8,getHeight()-bottom+3,getWidth()-16,bottom-4,Justification::left);
 }
 void PitchEditor::mouseDown(const MouseEvent& e) {
     if(e.y<top || e.x<left) return;
@@ -157,6 +186,7 @@ void PitchEditor::mouseDown(const MouseEvent& e) {
     repaint();
 }
 void PitchEditor::mouseWheelMove(const MouseEvent& e,const MouseWheelDetails& wheel) {
+    suspendFollow();
     const double delta=std::abs(wheel.deltaY)>0 ? wheel.deltaY : wheel.deltaX;
     if(e.mods.isCtrlDown() || e.mods.isCommandDown()) {
         if(e.mods.isShiftDown()) pitchSpan=std::clamp(pitchSpan*std::exp(-delta*2),6.,100.);
