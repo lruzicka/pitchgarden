@@ -79,3 +79,11 @@ at zero. Added tested, finite/overflow-checked project-seconds-to-samples fallba
 while preserving native integer sample positions. Missing coordinates retain
 host input rather than guessing zero. Source offsets remain applied only in
 region mapping. Full VST3 build and CTest 9/9 passed after the mapping fix.
+
+Release verification: project/module version 0.2.1; final standalone build/tests
+8/8 passed, full Linux VST3 build/tests 9/9 passed, and display-free ARA integration
+passed. The cursor/control snapshot was visually inspected. SDK pins and plugin
+identity remain unchanged. Live display access still fails, so REAPER transport,
+keyboard routing and optional preview scheduling remain NOT VERIFIED. See the
+0.2.1 completion report and acceptance checklist. No push or installed-bundle
+replacement was performed.
