@@ -11,9 +11,10 @@ public:
     ~AnalyzedSource() override { stop(); removeListener(this); }
     void ensureAnalysis() { if(restartNeeded) { restartNeeded=false; start(); } }
     PlaybackCache playback;
+    std::atomic<std::uint64_t> revision{0};
     pg::AnalysisSnapshot snapshot() const { return analysis.snapshot(); }
 private:
-    void stop() { analysis.cancel(); bridge.reset(); playback.reset(); }
+    void stop() { revision.fetch_add(1); analysis.cancel(); bridge.reset(); playback.reset(); }
     void start() {
         restartNeeded=false;
         stop();

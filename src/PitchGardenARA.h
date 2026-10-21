@@ -24,6 +24,7 @@
 #pragma once
 #include "PitchGardenPlayback.h"
 #include "TransportState.h"
+#include "PitchGardenAudition.h"
 
 class PitchGardenDocumentController final : public ARADocumentControllerSpecialisation,
                                                             private ProcessingLockInterface
@@ -55,6 +56,9 @@ protected:
         return new ARAAudioModification(audioSource,hostRef,optionalModificationToClone);
     }
 
+    ARAPlaybackRegion* doCreatePlaybackRegion(ARAAudioModification* modification,ARA::ARAPlaybackRegionHostRef hostRef) noexcept override {
+        return new PitchGardenRegion(modification,hostRef);
+    }
     ARAPlaybackRenderer* doCreatePlaybackRenderer() noexcept override
     {
         return new PitchGardenPlayback (getDocumentController(), *this);
@@ -62,7 +66,7 @@ protected:
 
     ARAEditorRenderer* doCreateEditorRenderer() noexcept override
     {
-        return new ARAEditorRenderer(getDocumentController());
+        return new PitchGardenAudition(getDocumentController(),*this);
     }
 
     bool doRestoreObjectsFromStream (ARAInputStream& input,
@@ -220,6 +224,7 @@ public:
     AudioProcessorARAExtension* getARAClientExtensions() override { return this; }
 
     pg::TransportState transport;
+    PitchGardenAudition* auditionRenderer() const { return getEditorRenderer<PitchGardenAudition>(); }
 
 private:
     double processingRate=0;
@@ -241,10 +246,16 @@ class PitchGardenProcessorEditor final : public AudioProcessorEditor,
 public:
     explicit PitchGardenProcessorEditor(PitchGardenProcessorBase& processorIn)
         : AudioProcessorEditor(&processorIn),AudioProcessorEditorARAExtension(&processorIn),
-          transport(processorIn.transport),piano([this] { return collect(); },[this] { return transport.read(); }) {
+          transport(processorIn.transport),audition(processorIn.auditionRenderer()),
+          piano([this] { return collect(); },[this] { return transport.read(); },
+            {[this] { return audition!=nullptr; },
+             [this](const PitchRegionDisplay& region,const pg::Note& note) { return preview(region,note); },
+             [this] { if(audition) audition->stop(); previewFailure={}; },
+             [this] { return previewStatus(); }}) {
         setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
         addAndMakeVisible(piano); setResizable(true,false); setResizeLimits(480,260,2400,1600); setSize(1000,560);
     }
+    ~PitchGardenProcessorEditor() override { if(audition) audition->stop(); }
     void resized() override { piano.setBounds(getLocalBounds()); }
     bool keyPressed(const KeyPress& key) override {
         if(key.getKeyCode()!=KeyPress::spaceKey || key.getModifiers().isAnyModifierKeyDown()) return false;
@@ -261,6 +272,32 @@ public:
     void focusLost(FocusChangeType) override { spaceHeld=false; }
     AudioProcessorEditorARAExtension* getARAClientExtensions() override { return this; }
 private:
+    bool preview(const PitchRegionDisplay& region,const pg::Note& note) {
+        previewFailure={};
+        const auto interval=pg::auditionInterval(region.mapping,note.start,note.end);
+        if(audition==nullptr || !region.supported || !interval || transport.read().playing) return false;
+        previewRequestedAt=Time::getMillisecondCounterHiRes(); previewCallbacks=audition->callbackCount();
+        const bool accepted=audition->submit({region.identity,region.sourceRevision,region.mapping,*interval});
+        if(!accepted) previewFailure="Audition unavailable: region not assigned to this ARA editor renderer";
+        return accepted;
+    }
+    String previewStatus() const {
+        if(audition==nullptr) return "Audition unavailable: host supplied no ARA editor-renderer role";
+        if(previewFailure.isNotEmpty()) return previewFailure;
+        switch(audition->getStatus()) {
+            case NoteAuditionStatus::idle: return "Select a note, then Audition (original audio; host transport stays unchanged)";
+            case NoteAuditionStatus::queued:
+                if(audition->callbackCount()==previewCallbacks && Time::getMillisecondCounterHiRes()-previewRequestedAt>1000)
+                    return "Host has not rendered the ARA preview; stopped audition may be unavailable";
+                return "Audition queued: waiting for host editor-renderer callback";
+            case NoteAuditionStatus::buffering: return "Audition: waiting for cached source samples";
+            case NoteAuditionStatus::playing: return "Auditioning original note";
+            case NoteAuditionStatus::finished: return "Audition finished";
+            case NoteAuditionStatus::invalid: return "Audition cancelled: source or region changed";
+            case NoteAuditionStatus::hostPlaying: return "Audition cancelled: host playback started";
+        }
+        return {};
+    }
     std::vector<PitchRegionDisplay> collect() {
         std::vector<PitchRegionDisplay> displays;
         auto* view=getARAEditorView(); if(view==nullptr) return displays;
@@ -277,11 +314,15 @@ private:
             const auto map=PitchGardenPlayback::mapping(*region);
             const bool supported=map.supported() && !region->isTimestretchEnabled() && !region->isTimeStretchReflectingTempo();
             const char* name=source->getName();
-            displays.push_back({String(name ? name : source->getPersistentID().c_str()),map,source->snapshot(),supported,source->playback.unavailable.load()});
+            displays.push_back({String(name ? name : source->getPersistentID().c_str()),map,source->snapshot(),supported,source->playback.unavailable.load(),static_cast<PitchGardenRegion*>(region)->identity,source->revision.load()});
         }
         return displays;
     }
     pg::TransportState& transport;
+    PitchGardenAudition* audition=nullptr;
+    double previewRequestedAt=0;
+    std::uint64_t previewCallbacks=0;
+    String previewFailure;
     PitchEditor piano;
     bool spaceHeld=false;
 };

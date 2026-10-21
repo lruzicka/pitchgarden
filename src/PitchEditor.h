@@ -10,12 +10,19 @@ struct PitchRegionDisplay {
     pg::AnalysisSnapshot analysis;
     bool supported=true;
     bool playbackUnavailable=false;
+    std::uint64_t identity=0,sourceRevision=0;
+};
+struct PitchAuditionControls {
+    std::function<bool()> available;
+    std::function<bool(const PitchRegionDisplay&,const pg::Note&)> start;
+    std::function<void()> stop;
+    std::function<juce::String()> status;
 };
 // Model values only: no host-owned pointers survive the collection callback.
 class PitchEditor final : public juce::Component, private juce::Timer {
 public:
     explicit PitchEditor(std::function<std::vector<PitchRegionDisplay>()> collect,
-        std::function<pg::TransportSnapshot()> transport={});
+        std::function<pg::TransportSnapshot()> transport={},PitchAuditionControls audition={});
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -32,6 +39,9 @@ private:
     std::vector<PitchRegionDisplay> regions;
     std::function<pg::TransportSnapshot()> readTransport;
     pg::TransportSnapshot transport;
+    PitchAuditionControls audition;
+    juce::TextButton auditionButton{"Audition"},stopAuditionButton{"Stop preview"};
+    juce::Label auditionStatus;
     juce::ToggleButton followButton{"Follow"};
     juce::TextButton fitButton{"Fit"};
     juce::Label help,status;

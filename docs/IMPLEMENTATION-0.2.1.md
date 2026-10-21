@@ -34,3 +34,17 @@ Explicit no-keyboard-grab settings plus optional message-thread ARA Space reques
 with repeat suppression. Actual JUCE VST3 Linux wrapper does not implement a
 custom key forwarding override; no platform event injection is introduced.
 Full build and CTest 8/8 passed, including fake host Space requests and transport.
+
+Audition: optional ARA editor renderer adds cached original source audio only in
+stopped realtime rendering. Assigned-region identity, source revision and exact
+region mapping are validated; no source pointers in requests. New per-renderer
+assignment gates cover ARA assignment callbacks outside editing cycles. Streamed
+preview has 5 ms boundary fades and stops at the clipped source note range. Host
+playback, source invalidation, item edits or editor close cancel preview. No host
+seek/start/stop/cycle calls are used for audition. GUI reports absent role,
+unassigned region, cache wait and missing stopped render callbacks. No claim
+that REAPER provides or schedules this optional role. Integration checks add-only
+original samples, preview finish/stop, no export preview, host-play cancellation,
+movement/invalidation and unchanged host transport request counts. Full build
+and CTest 8/8 passed. The test host's known-role mask must include all three ARA
+roles; unknown roles are treated as enabled for backward compatibility.
