@@ -151,6 +151,10 @@ int main() {
             const auto expected=float(.6*std::sin(2*3.141592653589793*440*sourceTime));
             CHECK(output.getSample(c,i)==expected);
         }
+        // JUCE permits a host to supply project seconds without sample position.
+        juce::AudioPlayHead::PositionInfo secondsOnly; secondsOnly.setIsPlaying(true); secondsOnly.setTimeInSeconds(12);
+        renderer.processBlock(output,juce::AudioProcessor::Realtime::no,secondsOnly);
+        CHECK(std::abs(output.getSample(0,10)-float(.6*std::sin(2*3.141592653589793*440*double(9610)/48000)))<1e-6);
         // Region move/trim changes mapping without changing source results.
         const auto result=source->snapshot().result;
         controller.beginEditing(); regionProps.startInPlaybackTime=20; regionProps.startInModificationTime=.4;

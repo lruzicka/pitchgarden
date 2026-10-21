@@ -18,6 +18,11 @@ int main() {
     CHECK(pg::followStart(10,10,{2,true,true,true},true)==.5);
     CHECK(pg::followStart(0,10,{99,true,true,false},false)==0);
     CHECK(pg::followStart(0,10,{99,true,false,false},true)==0);
+    CHECK(pg::projectSamplePosition({},12.5,48000)==600000);
+    CHECK(pg::projectSamplePosition({},-1.,48000)==-48000);
+    CHECK(pg::projectSamplePosition(123,{},48000)==123);
+    CHECK(!pg::projectSamplePosition({},{},48000));
+    CHECK(!pg::projectSamplePosition({},1e300,48000));
     pg::RegionMapping region{12,3,5,5};
     const auto interval=pg::auditionInterval(region,1,4); CHECK(interval && interval->start==3 && interval->end==4);
     CHECK(!pg::auditionInterval(region,0,2));
