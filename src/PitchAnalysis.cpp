@@ -21,7 +21,7 @@ void AnalysisSettings::validate(double sr) const {
     if (!std::isfinite(sr) || sr<8000 || sr>384000 || window<32 || window>1048576
         || hop==0 || hop>window || !std::isfinite(minHz) || !std::isfinite(maxHz)
         || minHz<=0 || maxHz<=minHz || maxHz>=sr/2 || !std::isfinite(threshold)
-        || threshold<=0 || threshold>=1)
+        || threshold<=0 || threshold>=1 || 2*sr/minHz>1048574)
         throw std::invalid_argument("Invalid pitch analysis settings");
 }
 std::size_t AnalysisSettings::windowFor(double sr) const {

@@ -26,7 +26,8 @@ int main() {
     CHECK(wait(m)); CHECK(m.snapshot().state==pg::AnalysisState::failed); CHECK(!m.snapshot().error.empty());
     std::promise<void> reading; auto began=reading.get_future();
     std::promise<void> release; auto resume=release.get_future().share();
-    m.start(48000,480000,[&](auto,int n,float* dst) { reading.set_value(); resume.wait(); std::fill_n(dst,n,0.f); return true; });
+    std::atomic<bool> signalled{false};
+    m.start(48000,480000,[&](auto,int n,float* dst) { if(!signalled.exchange(true)) reading.set_value(); resume.wait(); std::fill_n(dst,n,0.f); return true; });
     began.wait(); release.set_value(); m.cancel();
     CHECK(m.snapshot().state==pg::AnalysisState::waiting); CHECK(!m.snapshot().result);
     m.start(48000,4096,[](auto,int n,float* dst) { std::fill_n(dst,n,0.f); return true; });

@@ -54,6 +54,15 @@ void PitchEditor::timerCallback() {
     auto next=collect(); bool changed=next.size()!=regions.size();
     if(!changed) for(std::size_t i=0;i<next.size();++i) if(!same(next[i],regions[i])) { changed=true; break; }
     if(!changed) return;
+    bool refit=next.size()!=regions.size();
+    if(!refit) for(std::size_t i=0;i<next.size();++i) {
+        const auto& a=next[i]; const auto& b=regions[i];
+        if(a.name!=b.name || !exactlyEqual(a.mapping.timelineStart,b.mapping.timelineStart)
+            || !exactlyEqual(a.mapping.sourceStart,b.mapping.sourceStart)
+            || !exactlyEqual(a.mapping.sourceDuration,b.mapping.sourceDuration)
+            || (a.analysis.result && a.analysis.result!=b.analysis.result)) { refit=true; break; }
+    }
+    if(refit) fitted=false;
     regions=std::move(next); selectedRegion=selectedNote=-1; detail={};
     bool ready=false; String text=regions.empty() ? "Waiting for ARA audio source / region selection" : String{};
     for(auto& r:regions) {

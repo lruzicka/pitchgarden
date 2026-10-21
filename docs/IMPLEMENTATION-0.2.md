@@ -61,3 +61,15 @@ sample-reader thread ownership, actual sample acquisition, detected notes, unity
 rendering at source/timeline offsets, moves, trims, stereo 96k replacement and
 reader cleanup. A generated editor image was inspected. Full VST3 build passed.
 This is not an interactive REAPER acceptance result.
+
+Phase E: independent review found cache-miss audio erasure and JUCE buffering's
+internal blocking mutex. Both fixed: stage complete render blocks before output,
+replace buffering with four preallocated windows and staging publication, and
+use atomic RenderGate for model/cache lifetimes. Regression with blocked host I/O
+fails against the old renderer and passes with the fix. Follow-up review found
+no further important issue; cache-capacity fallback is documented. Added separate
+ARA document isolation and non-ARA/null-playhead unity checks. Final core suite
+6/6, full suite 7/7, and full VST3 build passed. Bootstrap restored exact pins
+without downloads. ASan/UBSan could not configure because runtimes are missing.
+Interactive REAPER remains NOT VERIFIED because the display cannot be opened.
+See COMPLETION-0.2.md for file inventory, limitations and verification results.

@@ -37,12 +37,12 @@ protected:
     }
     void willBeginEditing (ARADocument*) override
     {
-        processBlockLock.enterWrite();
+        processBlockLock.beginWrite();
     }
 
     void didEndEditing (ARADocument*) override
     {
-        processBlockLock.exitWrite();
+        processBlockLock.endWrite();
         for(auto* source : getDocumentController()->getDocument<ARADocument>()->getAudioSources<AnalyzedSource>())
             source->ensureAnalysis();
     }
@@ -124,12 +124,12 @@ protected:
     }
 
 private:
-    ScopedTryReadLock getProcessingLock() override
+    pg::RenderGate::ReadToken getProcessingLock() override
     {
-        return ScopedTryReadLock { processBlockLock };
+        return processBlockLock.tryRead();
     }
 
-    ReadWriteLock processBlockLock;
+    pg::RenderGate processBlockLock;
 };
 
 

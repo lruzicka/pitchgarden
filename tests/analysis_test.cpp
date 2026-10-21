@@ -35,6 +35,13 @@ int main() {
     CHECK(pg::analyzeSource(48000,12,[](auto,int,float*) { return false; }).empty());
     bool failed=false; try { pg::analyzeSource(48000,4096,[](auto,int,float*) { return false; }); }
     catch (const std::runtime_error&) { failed=true; } CHECK(failed);
+    CHECK(!pg::detectPitch(shortWave.data(),shortWave.size(),1e300,1,2).voiced);
+    auto checkConfig=[](pg::AnalysisSettings cfg) {
+        try { cfg.windowFor(48000); return false; } catch(const std::invalid_argument&) { return true; }
+    };
+    pg::AnalysisSettings bad; bad.minHz=1e-300; CHECK(checkConfig(bad));
+    bad={}; bad.hop=0; CHECK(checkConfig(bad));
+    bad={}; bad.threshold=std::numeric_limits<double>::quiet_NaN(); CHECK(checkConfig(bad));
     bool invalid=false; try { pg::analyzeSource(0,100,{},{}); } catch(const std::invalid_argument&) { invalid=true; } CHECK(invalid);
     std::cout << "analysis conversions, mapping and reference pitches passed\n";
 }

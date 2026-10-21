@@ -15,6 +15,7 @@ public:
 private:
     void stop() { analysis.cancel(); bridge.reset(); playback.reset(); }
     void start() {
+        restartNeeded=false;
         stop();
         if(!isSampleAccessEnabled()) return;
         try {
