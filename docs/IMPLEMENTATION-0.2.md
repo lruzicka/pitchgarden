@@ -38,3 +38,9 @@ Each completed phase receives a separate commit. No push. No correction DSP.
   in source-management calls or endEditing, not arbitrary GUI timer callbacks.
 - Analysis window increases to at least 2*sampleRate/65+2 samples to retain the
   configured minimum at high sample rates. Window/hop remain sample counts.
+
+Phase A: core CTest 2/2 passed; full pinned VST3 build passed. Commit 525e252.
+Phase B: per-source background jobs, immutable snapshots, clearing on invalidation,
+reader shutdown before source edits, and endEditing reader recreation implemented.
+Core CTest 3/3 and full incremental VST3 build passed. The temporary generic editor
+will be replaced in D. The original demo supplies playback until D.
