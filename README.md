@@ -85,6 +85,11 @@ Source offsets and current region timeline positions determine visualization.
 - Space uses host keyboard routing or the optional ARA playback controller when
   the native wrapper receives it. Repeated key-downs are suppressed. Other keys
   remain unhandled; the JUCE Linux focus issue can still affect host shortcuts.
+- Empty piano-roll background: click to move REAPER's edit cursor. Drag the time
+  ruler to move it continuously. These gestures do not seek playback or audition;
+  note holds retain original-source audition. A blue dashed marker shows the
+  edit cursor independently of the playback cursor when REAPER supplies its API.
+  [Cursor-control verification remains pending live checks](docs/REAPER-CURSOR-CONTROL.md).
 - **Diagnostics**: hover to inspect source time, raw frequency/continuous MIDI/
   confidence, accepted pitch/confidence and the representative note pitch.
 - Rectangles sit on the representative note row; the white curve shows accepted
