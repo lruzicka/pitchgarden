@@ -99,7 +99,7 @@ if(PITCHGARDEN_BUILD_PLUGIN)
   juce_generate_juce_header(PitchGardenMIDI)
   target_include_directories(PitchGardenMIDI PRIVATE
     "${JUCE_DIR}/modules/juce_audio_processors_headless/format_types/VST3_SDK")
-  target_sources(PitchGardenMIDI PRIVATE src/MidiEntry.cpp src/ARAAnalysisBridge.cpp src/MidiFileExport.cpp)
+  target_sources(PitchGardenMIDI PRIVATE src/MidiEntry.cpp src/ARAAnalysisBridge.cpp src/MidiFileExport.cpp src/MidiEditor.cpp)
   target_compile_definitions(PitchGardenMIDI PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
   target_link_libraries(PitchGardenMIDI PRIVATE pitchgarden_core pitchgarden_midi_conversion juce::juce_audio_utils
     juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
@@ -125,6 +125,13 @@ if(PITCHGARDEN_BUILD_PLUGIN)
     target_compile_definitions(pitchgarden_midi_file_test PRIVATE $<TARGET_PROPERTY:PitchGardenMIDI,COMPILE_DEFINITIONS>)
     target_link_libraries(pitchgarden_midi_file_test PRIVATE PitchGardenMIDI pitchgarden_midi_conversion)
     add_test(NAME midi_file COMMAND pitchgarden_midi_file_test)
+    add_executable(pitchgarden_midi_ara_test tests/midi_ara_test.cpp
+      "${JUCE_DIR}/modules/juce_audio_plugin_client/juce_audio_plugin_client_ARA.cpp")
+    target_include_directories(pitchgarden_midi_ara_test PRIVATE $<TARGET_PROPERTY:PitchGardenMIDI,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(pitchgarden_midi_ara_test PRIVATE $<TARGET_PROPERTY:PitchGardenMIDI,COMPILE_DEFINITIONS>)
+    target_link_libraries(pitchgarden_midi_ara_test PRIVATE PitchGardenMIDI pitchgarden_midi_conversion)
+    add_test(NAME midi_ara_integration COMMAND pitchgarden_midi_ara_test)
+    set_tests_properties(midi_ara_integration PROPERTIES TIMEOUT 30)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
       add_test(NAME plugin_identities COMMAND ${Python3_EXECUTABLE}
