@@ -28,5 +28,12 @@ int main() {
     CHECK(pg::writeMidiFile(target,notes,2,{120}).wasOk()); CHECK(target.existsAsFile());
     const auto prior=target.getSize(); CHECK(pg::writeMidiFile(target,{},2,{120}).failed() && target.getSize()==prior);
     target.deleteFile();
+    juce::File drag1,drag2;
+    CHECK(pg::retainedMidiFile(notes,2,{120},drag1).wasOk());
+    CHECK(pg::retainedMidiFile(notes,2,{120},drag2).wasOk());
+    CHECK(drag1!=drag2 && drag1.existsAsFile() && drag2.existsAsFile());
+    // File objects/temporary writers going out of scope do not remove exports.
+    { auto anotherReference=drag1; CHECK(anotherReference.existsAsFile()); }
+    CHECK(drag1.existsAsFile()); drag1.deleteFile(); drag2.deleteFile();
     std::cout << "SMF type 0 header, tempo, balanced notes, round trip, atomic file and empty rejection passed\n";
 }

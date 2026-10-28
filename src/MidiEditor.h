@@ -9,13 +9,26 @@ struct MidiRegionSnapshot {
     bool valid=false;
 };
 MidiRegionSnapshot collectMidiRegion(juce::ARAEditorView*);
-struct MidiExportSnapshot { std::vector<pg::MidiNote> notes; pg::RegionMapping mapping; pg::MidiTempo tempo; };
+struct MidiExportSnapshot { std::vector<pg::MidiNote> notes; pg::RegionMapping mapping; pg::MidiTempo tempo; juce::File dragFile; };
 class MidiNoteView final : public juce::Component {
 public:
     void setData(std::shared_ptr<const MidiExportSnapshot> next) { data=std::move(next); repaint(); }
     void paint(juce::Graphics&) override;
 private:
     std::shared_ptr<const MidiExportSnapshot> data;
+};
+class MidiDragArea final : public juce::Component,public juce::SettableTooltipClient {
+public:
+    std::function<void()> onDrag;
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override { started=false; }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if(isEnabled() && !started && e.mods.isLeftButtonDown() && e.getDistanceFromDragStart()>6) {
+            started=true; if(onDrag) onDrag();
+        }
+    }
+private:
+    bool started=false;
 };
 class MidiEditor final : public juce::AudioProcessorEditor,
                          private juce::AudioProcessorEditorARAExtension,private juce::Timer {
@@ -31,13 +44,17 @@ public:
 private:
     void timerCallback() override { refresh(); }
     void chooseExport();
+    void startMidiDrag();
+    void insertMidi();
+    PitchGardenMidiProcessor& ownerProcessor;
     juce::Label title,status,count,help;
-    juce::TextButton exportButton{"Export MIDI"},dragButton{"Drag MIDI to REAPER"};
+    juce::TextButton exportButton{"Export MIDI"},insertButton{"Insert on selected track"};
+    MidiDragArea dragButton;
     MidiNoteView view;
     std::shared_ptr<const MidiExportSnapshot> data;
     std::shared_ptr<const pg::AnalysisResult> previousResult;
     pg::RegionMapping previousMapping;
     std::uint64_t previousIdentity=0,previousRevision=0;
     std::unique_ptr<juce::FileChooser> chooser;
-    bool choosing=false;
+    bool choosing=false,dragInFlight=false;
 };

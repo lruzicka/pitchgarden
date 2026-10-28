@@ -29,4 +29,18 @@ juce::Result writeMidiFile(const juce::File& destination,const std::vector<MidiN
         return juce::Result::fail("Could not write MIDI file: "+destination.getFullPathName());
     return juce::Result::ok();
 }
+juce::Result retainedMidiFile(const std::vector<MidiNote>& notes,double duration,MidiTempo tempo,juce::File& file) {
+    file=juce::File{};
+    const auto folder=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile(
+        "PitchGarden-MIDI-"+juce::File::createLegalFileName(juce::SystemStats::getLogonName()));
+    const auto created=folder.createDirectory(); if(created.failed()) return created;
+    const auto candidate=folder.getChildFile(juce::Uuid().toString()+".mid");
+    const auto written=writeMidiFile(candidate,notes,duration,tempo);
+    if(written.wasOk()) file=candidate;
+    // Deliberately retain exports after drag completion and editor destruction:
+    // a host can finish importing/referencing the file after its drop callback.
+    // Files live until the user/OS cleans this documented temporary directory.
+    return written;
+}
+
 }

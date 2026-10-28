@@ -38,6 +38,15 @@ bool ready(AnalyzedSource* source) {
 }
 int main() {
     juce::ScopedJuceInitialiser_GUI gui;
+    {
+        MidiDragArea area; area.setEnabled(true); int drags=0; area.onDrag=[&] { ++drags; };
+        const juce::Point<float> start{0,0},moved{20,20};
+        const juce::MouseEvent event(juce::Desktop::getInstance().getMainMouseSource(),moved,
+            juce::ModifierKeys::leftButtonModifier,1,0,0,0,0,&area,&area,{},start,{},1,true);
+        area.mouseDown(event); CHECK(drags==0); area.mouseDrag(event); area.mouseDrag(event); CHECK(drags==1);
+        area.mouseDown(event); area.mouseDrag(event); CHECK(drags==2);
+        area.setEnabled(false); area.mouseDown(event); area.mouseDrag(event); CHECK(drags==2);
+    }
     auto* factory=juce::ARADocumentControllerSpecialisation::createARAFactory<PitchGardenMidiDocumentController>();
     CHECK(std::strcmp(factory->factoryID,"org.pitchgarden.midi.arafactory.0.1.0")==0);
     CHECK(std::strcmp(factory->documentArchiveID,"org.pitchgarden.midi.aradocumentarchive.1")==0);

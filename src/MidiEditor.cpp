@@ -48,14 +48,23 @@ void MidiNoteView::paint(juce::Graphics& g) {
         g.setColour(juce::Colour(0xff65bfb0)); g.fillRect(bounds);
     }
 }
+void MidiDragArea::paint(juce::Graphics& g) {
+    g.setColour(isEnabled() ? juce::Colour(0xff315e58) : juce::Colour(0xff252e35)); g.fillRoundedRectangle(getLocalBounds().toFloat(),5.f);
+    g.setColour(isEnabled() ? juce::Colours::white : juce::Colours::grey);
+    g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1),5.f,1.f);
+    g.setFont(juce::FontOptions(18.f)); g.drawText("Drag MIDI to REAPER",getLocalBounds(),juce::Justification::centred);
+}
 MidiEditor::MidiEditor(PitchGardenMidiProcessor& owner)
-    : AudioProcessorEditor(&owner),AudioProcessorEditorARAExtension(&owner) {
+    : AudioProcessorEditor(&owner),AudioProcessorEditorARAExtension(&owner),ownerProcessor(owner) {
     setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
-    for(auto* c:std::initializer_list<juce::Component*>{&title,&status,&count,&help,&view,&exportButton,&dragButton}) addAndMakeVisible(c);
-    title.setText("PitchGarden MIDI",juce::dontSendNotification); title.setFont(juce::FontOptions(26.f));
+    for(auto* c:std::initializer_list<juce::Component*>{&title,&status,&count,&help,&view,&exportButton,&insertButton,&dragButton}) addAndMakeVisible(c);
+    title.setText("PitchGarden MIDI",juce::dontSendNotification); title.setFont(juce::FontOptions(26.f)); help.setFont(juce::FontOptions(12.f));
     help.setText("Read-only notes. Velocity 100, channel 1. MIDI files use an explicit constant tempo.",juce::dontSendNotification);
-    for(auto* button:{&exportButton,&dragButton}) { button->setWantsKeyboardFocus(false); button->setMouseClickGrabsKeyboardFocus(false); }
-    exportButton.onClick=[this] { chooseExport(); }; dragButton.setEnabled(false);
+    for(auto* button:std::initializer_list<juce::Component*>{&exportButton,&insertButton,&dragButton}) { button->setWantsKeyboardFocus(false); button->setMouseClickGrabsKeyboardFocus(false); }
+    exportButton.onClick=[this] { chooseExport(); }; insertButton.onClick=[this] { insertMidi(); };
+    dragButton.onDrag=[this] { startMidiDrag(); }; dragButton.setEnabled(false);
+    dragButton.setTooltip("Drag a prepared MIDI file into a track at the original item position. Requires verified constant project tempo.");
+    insertButton.setTooltip("Select one destination track in REAPER. Insert at the original item position using native project timing, including tempo changes.");
     setResizable(true,false); setResizeLimits(640,360,1800,1200); setSize(900,540);
     refresh(); startTimerHz(4);
 }
@@ -64,10 +73,13 @@ void MidiEditor::resized() {
     title.setBounds(16,8,getWidth()-32,36); status.setBounds(16,46,getWidth()-32,24);
     count.setBounds(16,72,getWidth()-32,24); view.setBounds(16,104,getWidth()-32,getHeight()-218);
     dragButton.setBounds(16,getHeight()-98,getWidth()-220,50); exportButton.setBounds(getWidth()-190,getHeight()-98,174,32);
-    help.setBounds(16,getHeight()-40,getWidth()-32,32);
+    insertButton.setBounds(getWidth()-190,getHeight()-60,174,28);
+    help.setBounds(16,getHeight()-28,getWidth()-32,24);
 }
 void MidiEditor::refresh() {
     const auto source=collectMidiRegion(getARAEditorView());
+    const auto flatTempo=ownerProcessor.midiHost.constantTempo();
+    const pg::MidiTempo tempo{flatTempo.value_or(120.)};
     if(!source.valid) { data.reset(); status.setText(source.message,juce::dontSendNotification); }
     else if(source.analysis.state!=pg::AnalysisState::ready || !source.analysis.result) {
         data.reset(); juce::String message;
@@ -80,18 +92,27 @@ void MidiEditor::refresh() {
         status.setText(message,juce::dontSendNotification);
     } else {
         const auto& map=source.mapping;
-        if(!data || previousResult!=source.analysis.result || previousIdentity!=source.identity || previousRevision!=source.revision
+        if(!data || data->tempo.microseconds()!=tempo.microseconds() || (flatTempo && !data->notes.empty() && !data->dragFile.existsAsFile()) || previousResult!=source.analysis.result || previousIdentity!=source.identity || previousRevision!=source.revision
             || !juce::exactlyEqual(previousMapping.timelineStart,map.timelineStart) || !juce::exactlyEqual(previousMapping.sourceStart,map.sourceStart)
             || !juce::exactlyEqual(previousMapping.sourceDuration,map.sourceDuration) || !juce::exactlyEqual(previousMapping.playbackDuration,map.playbackDuration)) {
             const auto converted=pg::convertMidiNotes(source.analysis.result->notes,map);
-            auto next=std::make_shared<MidiExportSnapshot>(); next->notes=converted.notes; next->mapping=map; data=next;
+            auto next=std::make_shared<MidiExportSnapshot>(); next->notes=converted.notes; next->mapping=map; next->tempo=tempo;
+            if(flatTempo && !next->notes.empty()) {
+                const auto prepared=pg::retainedMidiFile(next->notes,map.playbackDuration,tempo,next->dragFile);
+                if(prepared.failed()) status.setText(prepared.getErrorMessage(),juce::dontSendNotification);
+            }
+            data=next;
             previousResult=source.analysis.result; previousIdentity=source.identity; previousRevision=source.revision; previousMapping=map;
             status.setText(converted.error.empty() ? (converted.notes.empty() ? "No reliable notes in this region" : "Ready: "+source.name)
                                                  : juce::String(converted.error),juce::dontSendNotification);
         }
     }
     const bool ready=data && !data->notes.empty();
-    exportButton.setEnabled(ready); count.setText(juce::String(ready ? int(data->notes.size()) : 0)+" recognized notes",juce::dontSendNotification);
+    exportButton.setEnabled(ready); insertButton.setEnabled(ready && !dragInFlight);
+    dragButton.setEnabled(ready && flatTempo.has_value() && data->dragFile.existsAsFile() && !dragInFlight); dragButton.repaint();
+    help.setText(flatTempo ? "File tempo "+juce::String(*flatTempo,2)+" BPM. Drop at the original item position, or insert on the selected track."
+        : "Drag disabled: tempo is changing/unknown. Export uses 120 BPM; use native Insert for project timing.",juce::dontSendNotification);
+    count.setText(juce::String(ready ? int(data->notes.size()) : 0)+" recognized notes",juce::dontSendNotification);
     view.setData(data);
 }
 void MidiEditor::chooseExport() {
@@ -108,5 +129,24 @@ void MidiEditor::chooseExport() {
             const auto result=pg::writeMidiFile(file.withFileExtension(".mid"),selected->notes,selected->mapping.playbackDuration,selected->tempo);
             safe->status.setText(result.wasOk() ? "Exported "+file.getFileName() : result.getErrorMessage(),juce::dontSendNotification);
         });
+}
+void MidiEditor::startMidiDrag() {
+    if(dragInFlight) return;
+    const auto selected=data; refresh();
+    const auto flatTempo=ownerProcessor.midiHost.constantTempo();
+    if(!selected || data!=selected || !flatTempo || pg::MidiTempo{*flatTempo}.microseconds()!=selected->tempo.microseconds()
+        || !selected->dragFile.existsAsFile()) {
+        status.setText("Selection/tempo changed or drag unavailable; use Export MIDI or native Insert",juce::dontSendNotification); return;
+    }
+    dragInFlight=true; juce::Component::SafePointer<MidiEditor> safe(this);
+    const bool started=juce::DragAndDropContainer::performExternalDragDropOfFiles({selected->dragFile.getFullPathName()},false,&dragButton,
+        [safe,selected] { if(safe) { safe->dragInFlight=false; safe->status.setText("Drag ended; verify the MIDI item in REAPER",juce::dontSendNotification); safe->refresh(); } });
+    if(!started) { dragInFlight=false; status.setText("External drag could not start; Export MIDI and native Insert remain available",juce::dontSendNotification); }
+    refresh();
+}
+void MidiEditor::insertMidi() {
+    refresh(); if(!data || data->notes.empty()) return;
+    const auto result=ownerProcessor.midiHost.insert(data->notes,data->mapping);
+    status.setText(result.wasOk() ? "Inserted MIDI at "+juce::String(data->mapping.timelineStart,3)+" s on the selected track" : result.getErrorMessage(),juce::dontSendNotification);
 }
 juce::AudioProcessorEditor* PitchGardenMidiProcessor::createEditor() { return new MidiEditor(*this); }
