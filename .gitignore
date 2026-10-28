@@ -1,2 +1,4 @@
 /build*/
 *.rpp-bak
+
+__pycache__/

@@ -9,7 +9,7 @@ struct MidiRegionSnapshot {
     bool valid=false;
 };
 MidiRegionSnapshot collectMidiRegion(juce::ARAEditorView*);
-struct MidiExportSnapshot { std::vector<pg::MidiNote> notes; pg::RegionMapping mapping; pg::MidiTempo tempo; juce::File dragFile; };
+struct MidiExportSnapshot { std::vector<pg::MidiNote> notes; pg::RegionMapping mapping; pg::MidiTempo tempo; juce::File dragFile; juce::String dragError; };
 class MidiNoteView final : public juce::Component {
 public:
     void setData(std::shared_ptr<const MidiExportSnapshot> next) { data=std::move(next); repaint(); }
@@ -56,5 +56,5 @@ private:
     pg::RegionMapping previousMapping;
     std::uint64_t previousIdentity=0,previousRevision=0;
     std::unique_ptr<juce::FileChooser> chooser;
-    bool choosing=false,dragInFlight=false;
+    bool choosing=false,dragInFlight=false,previousFlatTempo=false;
 };

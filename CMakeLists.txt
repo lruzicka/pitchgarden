@@ -44,7 +44,7 @@ add_test(NAME note_segmentation COMMAND pitchgarden_segment_test)
 add_test(NAME pitch_analysis COMMAND pitchgarden_analysis_test)
 add_test(NAME pitch_detector COMMAND pitchgarden_pitch_test)
 
-option(PITCHGARDEN_BUILD_PLUGIN "Build the PitchGarden analysis ARA VST3 plugin" OFF)
+option(PITCHGARDEN_BUILD_PLUGIN "Build PitchGarden and PitchGarden MIDI ARA VST3 plugins" OFF)
 if(PITCHGARDEN_BUILD_PLUGIN)
   set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE" CACHE PATH "JUCE source checkout")
   set(ARA_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/ARA_SDK" CACHE PATH "ARA SDK checkout")

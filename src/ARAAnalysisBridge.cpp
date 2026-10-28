@@ -1,11 +1,10 @@
 #include "ARAAnalysisBridge.h"
 #include <stdexcept>
 #include <algorithm>
-ARAAnalysisBridge::ARAAnalysisBridge(juce::ARAAudioSource* source)
-    : sampleRate(source->getSampleRate()), sampleCount(source->getSampleCount()), reader(source) {
+ARAAnalysisBridge::ARAAnalysisBridge(juce::ARAAudioSource* source, pg::AnalysisSettings cfg)
+    : sampleRate(source->getSampleRate()), sampleCount(source->getSampleCount()), reader(source),settings(cfg) {
     if (source->getChannelCount()<1 || source->getChannelCount()>2)
         throw std::runtime_error("Analysis supports mono and stereo sources");
-    pg::AnalysisSettings settings;
     buffer.setSize(source->getChannelCount(),static_cast<int>(settings.windowFor(sampleRate)));
 }
 bool ARAAnalysisBridge::readMono(std::int64_t start, int count, float* dst) {
@@ -28,5 +27,5 @@ std::vector<pg::PitchFrame> ARAAnalysisBridge::analyze(const std::atomic<bool>* 
     const std::function<void(float)>& progress) {
     return pg::analyzeSource(sampleRate,sampleCount,
         [this](std::int64_t pos,int n,float* dst) { return readMono(pos,n,dst); },
-        {},cancelled,progress);
+        settings,cancelled,progress);
 }

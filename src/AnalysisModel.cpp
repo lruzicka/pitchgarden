@@ -11,20 +11,20 @@ void AnalysisModel::fail(std::string error) {
     cancel(); std::lock_guard<std::mutex> guard(mutex);
     value.state=AnalysisState::failed; value.error=std::move(error);
 }
-void AnalysisModel::start(double sr, std::int64_t count, MonoReader read) {
+void AnalysisModel::start(double sr, std::int64_t count, MonoReader read, AnalysisSettings settings) {
     cancel();
     cancelled.store(false);
     { std::lock_guard<std::mutex> guard(mutex); value.state=AnalysisState::analyzing; }
-    worker=std::thread([this,sr,count,read=std::move(read)] {
+    worker=std::thread([this,sr,count,read=std::move(read),settings] {
         try {
             auto result=std::make_shared<AnalysisResult>(); result->sampleRate=sr;
-            result->frames=analyzeSource(sr,count,read,{},&cancelled,[this](float p) {
+            result->frames=analyzeSource(sr,count,read,settings,&cancelled,[this](float p) {
                 std::lock_guard<std::mutex> guard(mutex); value.progress=p;
             });
             if(cancelled.load()) return;
-            result->quality=classifyPitchQuality(result->frames,256.0/sr);
+            result->quality=classifyPitchQuality(result->frames,double(settings.hop)/sr);
             if(cancelled.load()) return;
-            result->notes=segmentNotes(result->frames,256.0/sr);
+            result->notes=segmentNotes(result->frames,double(settings.hop)/sr);
             std::lock_guard<std::mutex> guard(mutex);
             if(!cancelled.load()) { value.result=std::move(result); value.state=AnalysisState::ready; value.progress=1; }
         } catch(const std::exception& e) {

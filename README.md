@@ -13,6 +13,21 @@ preview, listening and lifecycle acceptance remain UNVERIFIED.** See the
 [0.2.2 findings and test evidence](docs/FIXES-0.2.2.md) and
 [REAPER verification steps](docs/REAPER-ACCEPTANCE-0.2.2.md).
 
+## PitchGarden MIDI 0.1
+
+The repository also builds **PitchGarden MIDI**, an independent ARA VST3 for
+monophonic audio-to-MIDI conversion. It shares analysis with PitchGarden and has
+its own plugin, factory and archive identities. It provides a read-only roll,
+960-PPQ Standard MIDI File export, a retained-file drag control for verified
+constant project tempo, and native selected-track insertion for tempo maps.
+Velocity is fixed at 100 on channel 1. MIDI-only analysis covers 30–2000 Hz,
+including bass; original PitchGarden analysis defaults and editor behavior remain.
+
+Both bundles build and automated tests pass. **Interactive REAPER MIDI loading,
+drag/insertion and original-plugin coexistence remain UNVERIFIED.** See the
+[MIDI implementation/timing guide](docs/PITCHGARDEN-MIDI-0.1.md) and
+[manual acceptance procedure](docs/REAPER-MIDI-ACCEPTANCE-0.1.md).
+
 ## Dependencies and build
 
 C++17, CMake 3.22+, a C++ compiler, and the existing pinned submodules are required.
@@ -45,7 +60,7 @@ cmake --build build-core --parallel 4
 ctest --test-dir build-core --output-on-failure
 ```
 
-Full plugin and in-process ARA regression tests:
+Both plugin bundles and in-process ARA/MIDI regression tests:
 
 ```bash
 ./scripts/build.sh
@@ -53,8 +68,7 @@ Full plugin and in-process ARA regression tests:
 cmake -S . -B build -DPITCHGARDEN_BUILD_PLUGIN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
-mkdir -p ~/.vst3
-cp -a build/PitchGardenARA_artefacts/Release/VST3/PitchGarden.vst3 ~/.vst3/
+python3 scripts/install.py  # installs both bundles and retains previous versions
 ```
 
 Ordinary configure/build never downloads dependencies. `JUCE_DIR` and

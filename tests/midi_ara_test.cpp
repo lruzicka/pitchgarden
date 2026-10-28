@@ -15,7 +15,7 @@ struct Host final : ARA::Host::AudioAccessControllerInterface,ARA::Host::Archivi
     bool readAudioSamples(ARA::ARAAudioReaderHostRef ref,ARA::ARASamplePosition start,ARA::ARASampleCount count,void* const buffers[]) noexcept override {
         CHECK(std::this_thread::get_id()!=ui);
         const auto rate=reinterpret_cast<Audio*>(ref)->rate;
-        const double frequencies[]={110,146.8324,196,246.9417,329.6276};
+        const double frequencies[]={41.20345,55,73.4162,98,123.4708};
         for(ARA::ARASampleCount i=0;i<count;++i) {
             const double time=double(start+i)/rate; const int index=int(time/.4);
             static_cast<float*>(buffers[0])[i]=time>=0 && index<5 && time-index*.4<.3
@@ -30,6 +30,26 @@ struct Host final : ARA::Host::AudioAccessControllerInterface,ARA::Host::Archivi
     bool writeBytesToArchive(ARA::ARAArchiveWriterHostRef,ARA::ARASize,ARA::ARASize,const ARA::ARAByte[]) noexcept override { return true; }
     void notifyDocumentArchivingProgress(float) noexcept override {}
     void notifyDocumentUnarchivingProgress(float) noexcept override {}
+};
+struct TempoHost final : pg::ReaperHostApplication {
+    int refs=1;
+    Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID iid,void** out) override {
+        *out=nullptr; if(std::memcmp(iid,pg::reaperHostIID,16)) return Steinberg::kNoInterface;
+        *out=this; addRef(); return Steinberg::kResultOk;
+    }
+    Steinberg::uint32 PLUGIN_API addRef() override { return ++refs; }
+    Steinberg::uint32 PLUGIN_API release() override { return --refs; }
+    static bool validate(void* p,const char*) { return p!=nullptr; }
+    static int tempoCount(ReaProject*) { return 0; }
+    static void signature(ReaProject*,double* bpm,double* beats) { *bpm=120; *beats=4; }
+    void* PLUGIN_API getReaperApi(Steinberg::CStringA name) override {
+        if(!std::strcmp(name,"ValidatePtr")) return reinterpret_cast<void*>(&validate);
+        if(!std::strcmp(name,"CountTempoTimeSigMarkers")) return reinterpret_cast<void*>(&tempoCount);
+        if(!std::strcmp(name,"GetProjectTimeSignature2")) return reinterpret_cast<void*>(&signature);
+        return nullptr;
+    }
+    void* PLUGIN_API getReaperParent(Steinberg::uint32 kind) override { CHECK(kind==3); return this; }
+    void* PLUGIN_API reaperExtended(Steinberg::uint32,void*,void*,void*) override { return nullptr; }
 };
 bool ready(AnalyzedSource* source) {
     const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(10);
@@ -52,11 +72,12 @@ int main() {
     CHECK(std::strcmp(factory->documentArchiveID,"org.pitchgarden.midi.aradocumentarchive.1")==0);
     ARA::ARAAssertFunction assertFunction=nullptr;
     ARA::ARAInterfaceConfiguration config{sizeof(config),ARA::kARAAPIGeneration_2_0_Final,&assertFunction}; factory->initializeARAWithConfiguration(&config);
-    Host host; Audio audio; ARA::Host::DocumentControllerHostInstance hostInstance(&host,&host);
+    Host host; TempoHost tempoHost; Audio audio; ARA::Host::DocumentControllerHostInstance hostInstance(&host,&host);
     ARA::ARADocumentProperties document{sizeof(document),"MIDI test"};
     const auto* instance=factory->createDocumentControllerWithDocument(&hostInstance,&document); ARA::Host::DocumentController controller(instance);
     {
         PitchGardenMidiProcessor processor; CHECK(processor.getName()=="PitchGarden MIDI");
+        processor.getVST3ClientExtensions()->setIHostApplication(&tempoHost);
         processor.getARAClientExtensions()->bindToARA(instance->documentControllerRef,
             ARA::kARAPlaybackRendererRole|ARA::kARAEditorRendererRole|ARA::kARAEditorViewRole,ARA::kARAEditorViewRole);
         MidiEditor editor(processor); editor.refresh(); CHECK(!editor.exportSnapshot());
@@ -65,7 +86,7 @@ int main() {
         auto context=controller.createMusicalContext(reinterpret_cast<ARA::ARAMusicalContextHostRef>(&host),&cp);
         ARA::ARARegionSequenceProperties sp{}; sp.structSize=sizeof(sp); sp.musicalContextRef=context;
         auto sequence=controller.createRegionSequence(reinterpret_cast<ARA::ARARegionSequenceHostRef>(&host),&sp);
-        ARA::ARAAudioSourceProperties ap{}; ap.structSize=sizeof(ap); ap.name="Five notes with pauses"; ap.persistentID="midi-test-source";
+        ARA::ARAAudioSourceProperties ap{}; ap.structSize=sizeof(ap); ap.name="Five bass notes with pauses"; ap.persistentID="midi-test-source";
         ap.sampleCount=96000; ap.sampleRate=48000; ap.channelCount=1;
         auto sourceRef=controller.createAudioSource(reinterpret_cast<ARA::ARAAudioSourceHostRef>(&audio),&ap);
         ARA::ARAAudioModificationProperties mp{}; mp.structSize=sizeof(mp); mp.persistentID="midi-mod";
@@ -76,11 +97,30 @@ int main() {
         controller.endEditing(); controller.enableAudioSourceSamplesAccess(sourceRef,true);
         auto* source=static_cast<AnalyzedSource*>(ARA::PlugIn::fromRef(sourceRef)); CHECK(ready(source));
         editor.refresh(); auto full=editor.exportSnapshot(); CHECK(full && full->notes.size()==5);
-        const int pitches[]={45,50,55,59,64}; for(int i=0;i<5;++i) CHECK(full->notes[std::size_t(i)].pitch==pitches[i]);
+        const auto sampleFile=juce::File::getCurrentWorkingDirectory().getChildFile("pitchgarden-midi-five-notes.mid");
+        CHECK(pg::writeMidiFile(sampleFile,full->notes,full->mapping.playbackDuration,full->tempo).wasOk());
+        { auto stream=sampleFile.createInputStream(); juce::MidiFile smf; CHECK(stream && smf.readFrom(*stream));
+          smf.convertTimestampTicksToSeconds(); int on=0,off=0;
+          for(int e=0;e<smf.getTrack(0)->getNumEvents();++e) {
+              const auto& message=smf.getTrack(0)->getEventPointer(e)->message;
+              if(message.isNoteOn()) { CHECK(std::abs(message.getTimeStamp()-full->notes[std::size_t(on)].start)<=full->tempo.toSeconds(1)/2+1e-8); ++on; }
+              if(message.isNoteOff()) ++off;
+          }
+          CHECK(on==5 && off==5);
+        }
+        CHECK(full->dragFile.existsAsFile()); editor.refresh(); CHECK(editor.exportSnapshot()==full);
+        full->dragFile.deleteFile(); editor.refresh();
+        CHECK(editor.exportSnapshot()==full && !full->dragFile.existsAsFile() && editor.analysisMessage().contains("removed"));
+        const int pitches[]={28,33,38,43,47}; for(int i=0;i<5;++i) CHECK(full->notes[std::size_t(i)].pitch==pitches[i]);
         controller.beginEditing(); rp.startInPlaybackTime=30; rp.startInModificationTime=.45;
         rp.durationInPlaybackTime=rp.durationInModificationTime=.95; controller.updatePlaybackRegionProperties(region,&rp); controller.endEditing();
         editor.refresh(); auto trimmed=editor.exportSnapshot(); CHECK(trimmed && trimmed!=full && trimmed->mapping.timelineStart==30 && trimmed->notes.size()==3);
         for(const auto& n:trimmed->notes) CHECK(n.start>=0 && n.end<=.95+1e-9);
+        controller.beginEditing(); rp.durationInPlaybackTime=1.1;
+        controller.updatePlaybackRegionProperties(region,&rp); controller.endEditing();
+        editor.refresh(); CHECK(!editor.exportSnapshot() && editor.analysisMessage().contains("stretched"));
+        controller.beginEditing(); rp.durationInPlaybackTime=.95;
+        controller.updatePlaybackRegionProperties(region,&rp); controller.endEditing(); editor.refresh();
         controller.beginEditing();
         auto second=controller.createPlaybackRegion(modification,reinterpret_cast<ARA::ARAPlaybackRegionHostRef>(&audio),&rp); controller.endEditing();
         editor.refresh(); CHECK(!editor.exportSnapshot() && editor.analysisMessage().contains("exactly one"));
@@ -89,13 +129,17 @@ int main() {
         controller.beginEditing(); audio.rate=44100; ap.sampleRate=44100; ap.sampleCount=88200;
         controller.updateAudioSourceProperties(sourceRef,&ap); controller.endEditing(); controller.enableAudioSourceSamplesAccess(sourceRef,true); CHECK(ready(source));
         editor.refresh(); CHECK(editor.exportSnapshot() && editor.exportSnapshot()->notes.size()==3);
+        const auto replaced=editor.exportSnapshot();
         auto image=editor.createComponentSnapshot(editor.getLocalBounds());
         auto path=juce::File::getCurrentWorkingDirectory().getChildFile("pitchgarden-midi-editor.png");
+        path.deleteFile();
         if(auto stream=path.createOutputStream()) juce::PNGImageFormat().writeImageToStream(image,*stream);
+        trimmed->dragFile.deleteFile(); replaced->dragFile.deleteFile();
         controller.enableAudioSourceSamplesAccess(sourceRef,false); editor.refresh(); CHECK(!editor.exportSnapshot());
         controller.beginEditing(); controller.destroyPlaybackRegion(region); controller.destroyAudioModification(modification);
         controller.destroyAudioSource(sourceRef); controller.destroyRegionSequence(sequence); controller.destroyMusicalContext(context); controller.endEditing();
     }
+    CHECK(tempoHost.refs==1);
     controller.destroyDocumentController(); CHECK(host.readers==0); factory->uninitializeARA();
     std::cout << "MIDI ARA identity, five-note source, pauses, offsets, trims, multi-region rejection, 48/44.1k replacement and shutdown passed\n";
 }

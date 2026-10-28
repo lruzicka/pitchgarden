@@ -20,7 +20,7 @@ struct AnalysisSnapshot {
 class AnalysisModel {
 public:
     ~AnalysisModel();
-    void start(double sampleRate, std::int64_t sampleCount, MonoReader);
+    void start(double sampleRate, std::int64_t sampleCount, MonoReader, AnalysisSettings settings={});
     void cancel();
     void fail(std::string);
     AnalysisSnapshot snapshot() const;

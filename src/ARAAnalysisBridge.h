@@ -6,7 +6,7 @@
 // the worker; it uses JUCE's synchronized HostAudioReader wrapper.
 class ARAAnalysisBridge {
 public:
-    explicit ARAAnalysisBridge(juce::ARAAudioSource*);
+    explicit ARAAnalysisBridge(juce::ARAAudioSource*, pg::AnalysisSettings settings={});
     bool readMono(std::int64_t start, int count, float* destination);
     std::vector<pg::PitchFrame> analyze(const std::atomic<bool>* cancelled=nullptr,
         const std::function<void(float)>& progress={});
@@ -15,4 +15,5 @@ public:
 private:
     juce::ARAAudioSourceReader reader;
     juce::AudioBuffer<float> buffer;
+    pg::AnalysisSettings settings;
 };

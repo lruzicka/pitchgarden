@@ -41,7 +41,7 @@ void MidiNoteView::paint(juce::Graphics& g) {
     }
     for(int i=0;i<=4;++i) {
         const auto time=data->mapping.playbackDuration*i/4;
-        g.setColour(juce::Colours::lightgrey); g.drawText(juce::String(time,2)+"s",int(x(time))-20,2,60,18,juce::Justification::centred);
+        g.setColour(juce::Colours::lightgrey); g.drawText(juce::String(time,2)+"s",juce::jlimit(0,std::max(0,getWidth()-60),int(x(time))-20),2,60,18,juce::Justification::centred);
     }
     for(const auto& n:data->notes) {
         juce::Rectangle<float> bounds(x(n.start),y(n.pitch+.4),std::max(1.f,x(n.end)-x(n.start)),std::max(3.f,y(n.pitch-.4)-y(n.pitch+.4)));
@@ -92,22 +92,25 @@ void MidiEditor::refresh() {
         status.setText(message,juce::dontSendNotification);
     } else {
         const auto& map=source.mapping;
-        if(!data || data->tempo.microseconds()!=tempo.microseconds() || (flatTempo && !data->notes.empty() && !data->dragFile.existsAsFile()) || previousResult!=source.analysis.result || previousIdentity!=source.identity || previousRevision!=source.revision
+        if(!data || data->tempo.microseconds()!=tempo.microseconds() || (flatTempo.has_value()!=previousFlatTempo) || previousResult!=source.analysis.result || previousIdentity!=source.identity || previousRevision!=source.revision
             || !juce::exactlyEqual(previousMapping.timelineStart,map.timelineStart) || !juce::exactlyEqual(previousMapping.sourceStart,map.sourceStart)
             || !juce::exactlyEqual(previousMapping.sourceDuration,map.sourceDuration) || !juce::exactlyEqual(previousMapping.playbackDuration,map.playbackDuration)) {
             const auto converted=pg::convertMidiNotes(source.analysis.result->notes,map);
             auto next=std::make_shared<MidiExportSnapshot>(); next->notes=converted.notes; next->mapping=map; next->tempo=tempo;
             if(flatTempo && !next->notes.empty()) {
                 const auto prepared=pg::retainedMidiFile(next->notes,map.playbackDuration,tempo,next->dragFile);
-                if(prepared.failed()) status.setText(prepared.getErrorMessage(),juce::dontSendNotification);
+                if(prepared.failed()) next->dragError=prepared.getErrorMessage();
             }
-            data=next;
+            data=next; previousFlatTempo=flatTempo.has_value();
             previousResult=source.analysis.result; previousIdentity=source.identity; previousRevision=source.revision; previousMapping=map;
             status.setText(converted.error.empty() ? (converted.notes.empty() ? "No reliable notes in this region" : "Ready: "+source.name)
                                                  : juce::String(converted.error),juce::dontSendNotification);
         }
     }
     const bool ready=data && !data->notes.empty();
+    if(ready && flatTempo && !data->dragFile.existsAsFile())
+        status.setText(data->dragError.isNotEmpty() ? "MIDI drag unavailable: "+data->dragError
+            : "MIDI drag file was removed; Export MIDI still works. Reselect the source to prepare another drag.",juce::dontSendNotification);
     exportButton.setEnabled(ready); insertButton.setEnabled(ready && !dragInFlight);
     dragButton.setEnabled(ready && flatTempo.has_value() && data->dragFile.existsAsFile() && !dragInFlight); dragButton.repaint();
     help.setText(flatTempo ? "File tempo "+juce::String(*flatTempo,2)+" BPM. Drop at the original item position, or insert on the selected track."
@@ -126,7 +129,10 @@ void MidiEditor::chooseExport() {
             safe->choosing=false; const auto file=choice.getResult(); if(file==juce::File{}) return;
             safe->refresh();
             if(safe->data!=selected) { safe->status.setText("Selection changed; export cancelled",juce::dontSendNotification); return; }
-            const auto result=pg::writeMidiFile(file.withFileExtension(".mid"),selected->notes,selected->mapping.playbackDuration,selected->tempo);
+            // The chooser's overwrite confirmation applies only to this exact
+            // pathname. Never normalize it afterward onto another existing file.
+            if(!file.hasFileExtension(".mid")) { safe->status.setText("Choose a filename ending in .mid; no file was written",juce::dontSendNotification); return; }
+            const auto result=pg::writeMidiFile(file,selected->notes,selected->mapping.playbackDuration,selected->tempo);
             safe->status.setText(result.wasOk() ? "Exported "+file.getFileName() : result.getErrorMessage(),juce::dontSendNotification);
         });
 }
