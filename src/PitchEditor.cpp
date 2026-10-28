@@ -1,4 +1,5 @@
 #include "PitchEditor.h"
+#include "EditorCoordinates.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -18,8 +19,8 @@ bool same(const PitchRegionDisplay& a,const PitchRegionDisplay& b) {
 }
 }
 PitchEditor::PitchEditor(std::function<std::vector<PitchRegionDisplay>()> fn,
-    std::function<pg::TransportSnapshot()> position,PitchAuditionControls preview)
-    : collect(std::move(fn)),readTransport(std::move(position)),audition(std::move(preview)) {
+    std::function<pg::TransportSnapshot()> position,PitchAuditionControls preview,PitchCursorControls cursorControls)
+    : collect(std::move(fn)),readTransport(std::move(position)),audition(std::move(preview)),cursor(std::move(cursorControls)) {
     setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
     addAndMakeVisible(diagnosticsButton);
     diagnosticsButton.setWantsKeyboardFocus(false); diagnosticsButton.setMouseClickGrabsKeyboardFocus(false);
@@ -42,14 +43,15 @@ void PitchEditor::stopHeldAudition() {
     auditionHeld=false;
     if(audition.stop) audition.stop();
 }
-void PitchEditor::mouseUp(const MouseEvent&) { stopHeldAudition(); }
+void PitchEditor::mouseUp(const MouseEvent&) { rulerDragging=false; stopHeldAudition(); }
 void PitchEditor::mouseDrag(const MouseEvent& e) {
-    if(!e.mods.isLeftButtonDown()) stopHeldAudition();
+    if(!e.mods.isLeftButtonDown()) { rulerDragging=false; stopHeldAudition(); }
+    else if(rulerDragging && isEnabled()) moveEditCursor(e.position.x);
     updateDiagnostic(e);
 }
 void PitchEditor::mouseMove(const MouseEvent& e) { updateDiagnostic(e); }
-void PitchEditor::visibilityChanged() { if(!isShowing()) stopHeldAudition(); }
-void PitchEditor::enablementChanged() { if(!isEnabled()) stopHeldAudition(); }
+void PitchEditor::visibilityChanged() { if(!isShowing()) { rulerDragging=false; stopHeldAudition(); } }
+void PitchEditor::enablementChanged() { if(!isEnabled()) { rulerDragging=false; stopHeldAudition(); } }
 void PitchEditor::resized() {
     fitButton.setBounds(8,6,48,26); followButton.setBounds(62,6,78,26); diagnosticsButton.setBounds(142,6,108,26); help.setBounds(258,4,getWidth()-266,28);
     status.setBounds(8,34,getWidth()-16,24); auditionStatus.setBounds(8,58,getWidth()-16,24);
@@ -91,8 +93,21 @@ void PitchEditor::updateTransport() {
     repaintCursor(old); repaintCursor(next);
     repaint(0,getHeight()-bottom,getWidth(),bottom);
 }
+void PitchEditor::updateEditCursor() {
+    auto next=cursor.position ? cursor.position() : std::nullopt;
+    if(next && !std::isfinite(*next)) next.reset();
+    if(next==editCursor) return;
+    editCursor=next; repaint();
+}
+void PitchEditor::moveEditCursor(float pixel) {
+    const auto time=pg::projectTimeAtPixel(pixel,left,getWidth()-left,timeStart,timeSpan);
+    cursorUnavailable=!time || !cursor.move || !cursor.move(*time);
+    updateEditCursor(); repaint();
+}
 void PitchEditor::timerCallback() {
-    updateTransport();
+    updateTransport(); updateEditCursor();
+    if(rulerDragging && (!ModifierKeys::getCurrentModifiersRealtime().isLeftButtonDown()
+        || !isShowing() || !Process::isForegroundProcess())) rulerDragging=false;
     // JUCE captures a drag's mouse-up even outside the component. Also poll
     // native button state for lost capture/cancellation and window deactivation.
     if(auditionHeld && (!ModifierKeys::getCurrentModifiersRealtime().isLeftButtonDown()
@@ -112,7 +127,7 @@ void PitchEditor::timerCallback() {
             || !exactlyEqual(a.mapping.sourceDuration,b.mapping.sourceDuration)
             || (a.analysis.result && a.analysis.result!=b.analysis.result)) { refit=true; break; }
     }
-    if(refit) fitted=false;
+    if(refit) { fitted=false; rulerDragging=false; }
     if(refit) { selectedRegion=selectedNote=-1; detail={}; diagnostic={}; }
     regions=std::move(next);
     bool ready=false; String text=regions.empty() ? "Waiting for ARA audio source / region selection" : String{};
@@ -200,6 +215,12 @@ void PitchEditor::paint(Graphics& g) {
             g.setColour(Colours::white); g.strokePath(curve,PathStrokeType(1.4f));
         }
     }
+    if(editCursor && *editCursor>=timeStart && *editCursor<=timeStart+timeSpan) {
+        const auto cursorX=x(*editCursor);
+        const float dashes[]={4.f,3.f};
+        g.setColour(Colours::deepskyblue);
+        g.drawDashedLine(Line<float>(cursorX,float(top),cursorX,float(getHeight()-bottom)),dashes,2,1.2f);
+    }
     if(transport.available && transport.projectSeconds>=timeStart && transport.projectSeconds<=timeStart+timeSpan) {
         const float cursorX=x(transport.projectSeconds);
         g.setColour(transport.playing ? Colours::yellow : Colours::orange);
@@ -213,15 +234,20 @@ void PitchEditor::paint(Graphics& g) {
         g.drawFittedText(diagnostic,overlay.reduced(6,4),Justification::centredLeft,2,.7f);
     }
     g.setColour(Colours::lightgrey);
-    const String transportText=transport.available ? (transport.playing ? "Playing " : "Stopped ")+String(transport.projectSeconds,3)+" s"+(transport.looping ? " (loop)" : "") : "Host position unavailable";
+    const String transportText=(editCursor ? "Edit "+String(*editCursor,3)+" s   |   " : String{})+(transport.available ? (transport.playing ? "Playing " : "Stopped ")+String(transport.projectSeconds,3)+" s"+(transport.looping ? " (loop)" : "") : "Host position unavailable");
     const String ranges="Time "+String(timeStart,2)+"–"+String(timeStart+timeSpan,2)+" s   |   MIDI "+String(pitchLow,1)+"–"+String(pitchLow+pitchSpan,1);
-    g.drawText(transportText+"   |   "+(detail.isNotEmpty() ? detail+"   |   "+ranges : ranges),8,getHeight()-bottom+3,getWidth()-16,bottom-4,Justification::left);
+    const String cursorMessage=cursorUnavailable ? "Edit cursor unavailable: REAPER cursor API/project required" : detail;
+    g.drawText(transportText+"   |   "+(cursorMessage.isNotEmpty() ? cursorMessage+"   |   "+ranges : ranges),8,getHeight()-bottom+3,getWidth()-16,bottom-4,Justification::left);
 }
 void PitchEditor::mouseDown(const MouseEvent& e) {
     if(!e.mods.isLeftButtonDown()) return;
-    stopHeldAudition();
-    if(e.y<top || e.x<left || !isEnabled()) return;
-    selectedRegion=selectedNote=-1; detail={};
+    stopHeldAudition(); rulerDragging=false;
+    if(e.x<left || e.x>=getWidth() || !isEnabled()) return;
+    if(e.y>=top-20 && e.y<top) {
+        rulerDragging=true; suspendFollow(); moveEditCursor(e.position.x); return;
+    }
+    if(e.y<top || e.y>=getHeight()-bottom) return;
+    selectedRegion=selectedNote=-1; detail={}; cursorUnavailable=false;
     const double timeline=timeStart+(e.x-left)*timeSpan/std::max(1,getWidth()-left);
     for(std::size_t r=0;r<regions.size();++r) {
         auto& region=regions[r]; if(!region.supported || !region.analysis.result) continue;
@@ -236,6 +262,9 @@ void PitchEditor::mouseDown(const MouseEvent& e) {
             break;
         }
     }
+    // A note press owns the whole gesture, even when audition is unavailable.
+    // Only an empty plot press requests a cursor change.
+    if(selectedNote<0) { suspendFollow(); moveEditCursor(e.position.x); }
     updateDiagnostic(e);
     repaint();
 }
@@ -262,7 +291,7 @@ void PitchEditor::updateDiagnostic(const MouseEvent& e) {
     repaint(left,top,getWidth()-left,70);
 }
 void PitchEditor::mouseWheelMove(const MouseEvent& e,const MouseWheelDetails& wheel) {
-    suspendFollow();
+    rulerDragging=false; suspendFollow();
     const double delta=std::abs(wheel.deltaY)>0 ? wheel.deltaY : wheel.deltaX;
     if(e.mods.isCtrlDown() || e.mods.isCommandDown()) {
         if(e.mods.isShiftDown()) pitchSpan=std::clamp(pitchSpan*std::exp(-delta*2),6.,100.);

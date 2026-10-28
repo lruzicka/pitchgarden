@@ -70,6 +70,10 @@ int main(int argc,char** argv) {
         processor.processBlock(dry,midi); CHECK(!processor.transport.read().playing && processor.transport.read().projectSeconds==2);
         processor.setPlayHead(nullptr); processor.releaseResources();
     }
+    { // The processor must expose the supported VST3 host-extension hook.
+        PitchGardenProcessor processor;
+        CHECK(processor.getVST3ClientExtensions()!=nullptr);
+    }
     auto* factory=juce::ARADocumentControllerSpecialisation::createARAFactory<PitchGardenDocumentController>();
     ARA::ARAAssertFunction assertFunction=nullptr;
     ARA::ARAInterfaceConfiguration config{sizeof(config),ARA::kARAAPIGeneration_2_0_Final,&assertFunction};
@@ -244,6 +248,30 @@ int main(int argc,char** argv) {
         for(int i=0;i<10;++i) { fill(); previewProcessor.processBlock(audio,midi); }
         CHECK(preview->getStatus()==NoteAuditionStatus::finished);
         {
+            // Exercise the real processor editor -> preview -> source-cache
+            // path independently of cursor routing, with a nonzero trim.
+            PitchGardenProcessorEditor mouseEditor(previewProcessor);
+            PitchEditor* roll=nullptr;
+            for(auto* child:mouseEditor.getChildren()) if(auto* candidate=dynamic_cast<PitchEditor*>(child)) roll=candidate;
+            CHECK(roll!=nullptr);
+            const juce::Point<float> notePoint{500,426};
+            const juce::MouseEvent notePress(juce::Desktop::getInstance().getMainMouseSource(),notePoint,
+                juce::ModifierKeys::leftButtonModifier,1,0,0,0,0,roll,roll,{},notePoint,{},1,false);
+            roll->mouseDown(notePress); fill(); previewProcessor.processBlock(audio,midi);
+            CHECK(preview->getStatus()==NoteAuditionStatus::playing);
+            CHECK(std::abs(audio.getSample(0,300)-(.123f+float(.6*std::sin(2*3.141592653589793*440*sampleTime))))<1e-6);
+            roll->mouseDrag(notePress.withNewPosition(juce::Point<float>{800,90}));
+            fill(); previewProcessor.processBlock(audio,midi); CHECK(preview->getStatus()==NoteAuditionStatus::playing);
+            CHECK(std::abs(audio.getSample(0,300)-(.123f+float(.6*std::sin(2*3.141592653589793*440*(5+812./48000)))))<1e-6);
+            roll->mouseUp(notePress.withNewPosition(juce::Point<float>{-20,-20}));
+            fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::idle);
+            // Close this editor with another note still held.
+            roll->mouseDown(notePress); fill(); previewProcessor.processBlock(audio,midi);
+            CHECK(preview->getStatus()==NoteAuditionStatus::playing);
+        }
+        fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::idle);
+
+        {
             // Suspend an audio callback after it observes the queued request,
             // then stop from the model thread before allowing it to continue.
             struct CoordinatedLock final : ProcessingLockInterface {
@@ -356,6 +384,67 @@ int main(int argc,char** argv) {
         // Closing with the button still held must stop the final voice.
     }
     CHECK(heldStarts==5 && heldStops==5);
+    {
+        int starts=0,stops=0;
+        std::vector<double> cursorMoves;
+        const auto original=display.analysis.result;
+        PitchEditor interaction([&] { return std::vector<PitchRegionDisplay>{display}; },{},
+            {[] { return true; },[&](const auto&,const auto&) { ++starts; return true; },[&] { ++stops; },{}},
+            {[&](double seconds) { cursorMoves.push_back(seconds); return true; },[] { return std::optional<double>(12.1); }});
+        interaction.setSize(1000,560);
+        const auto event=[&](float px,float py,int mods=juce::ModifierKeys::leftButtonModifier) {
+            const juce::Point<float> point{px,py};
+            return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(),point,mods,
+                1,0,0,0,0,&interaction,&interaction,{},point,{},1,false);
+        };
+        interaction.mouseDown(event(500,426)); CHECK(starts==1 && cursorMoves.empty());
+        interaction.mouseDrag(event(800,90)); CHECK(starts==1 && cursorMoves.empty());
+        interaction.mouseUp(event(-20,-20)); CHECK(stops==1);
+        interaction.mouseDown(event(500,300));
+        CHECK(starts==1 && stops==1 && cursorMoves.size()==1);
+        // Timeline is already project-relative: .2 s source offset must not
+        // become another .2 s cursor offset. Fit gives [11.95,12.55].
+        const double expected=11.95+(500.-66)*.6/(1000-66);
+        CHECK(std::abs(cursorMoves.back()-expected)<1e-9);
+        CHECK(std::abs(display.mapping.toTimeline(display.mapping.toSource(expected))-cursorMoves.back())<1e-9);
+        interaction.mouseDrag(event(800,90)); CHECK(cursorMoves.size()==1); // background is click-only
+        interaction.mouseUp(event(800,90)); CHECK(stops==1);
+        interaction.mouseDown(event(500,90)); CHECK(cursorMoves.size()==2 && starts==1);
+        interaction.mouseDrag(event(800,426)); CHECK(cursorMoves.size()==3 && starts==1); // ruler drag over note never auditions
+        CHECK(std::abs(cursorMoves.back()-(11.95+(800.-66)*.6/934))<1e-9);
+        interaction.mouseUp(event(-20,-20));
+        interaction.mouseDrag(event(700,90)); CHECK(cursorMoves.size()==3);
+        for(auto point:{juce::Point<float>{20,300},{500,550},{500,60},{500,79}}) interaction.mouseDown(event(point.x,point.y));
+        interaction.mouseDown(event(500,90,juce::ModifierKeys::rightButtonModifier));
+        CHECK(cursorMoves.size()==3 && starts==1 && stops==1);
+        interaction.mouseDown(event(500,426)); CHECK(starts==2 && cursorMoves.size()==3);
+        interaction.mouseUp(event(500,426)); CHECK(stops==2);
+        CHECK(display.analysis.result==original && original->notes[0].midiNote==57);
+        interaction.mouseDown(event(500,90)); interaction.setEnabled(false);
+        const auto beforeDisabled=cursorMoves.size();
+        interaction.mouseDrag(event(800,90)); CHECK(cursorMoves.size()==beforeDisabled);
+        interaction.setEnabled(true);
+        interaction.mouseDown(event(500,90));
+        interaction.mouseDrag(event(-100,90)); CHECK(std::abs(cursorMoves.back()-11.95)<1e-9);
+        interaction.mouseDrag(event(2000,90)); CHECK(std::abs(cursorMoves.back()-12.55)<1e-9);
+        interaction.mouseUp(event(2000,90));
+        // Move/trim the same source: its new project axis is independent of
+        // source sample offset. A failed cursor backend must not disable notes.
+        auto moved=display; moved.mapping={30,.4,.25,.25};
+        int failedMoves=0;
+        PitchEditor missingCursor([&] { return std::vector<PitchRegionDisplay>{moved}; },{},
+            {[] { return true; },[&](const auto&,const auto&) { ++starts; return true; },[&] { ++stops; },{}},
+            {[&](double seconds) { CHECK(std::abs(seconds-(29.95+434*.35/934))<1e-9); ++failedMoves; return false; },{}});
+        missingCursor.setSize(1000,560);
+        // Event coordinates are local and methods do not retain the event's
+        // originating component; no native input is synthesized here.
+        missingCursor.mouseDown(event(500,300)); CHECK(failedMoves==1);
+        missingCursor.mouseUp(event(500,300));
+        missingCursor.mouseDown(event(500,426)); CHECK(starts==3 && failedMoves==1);
+        missingCursor.mouseUp(event(-20,-20)); CHECK(stops==3);
+
+    }
+
     controller.enableAudioSourceSamplesAccess(ref,false);
     controller.beginEditing(); controller.destroyPlaybackRegion(region); controller.destroyAudioModification(mod);
     controller.destroyAudioSource(ref); controller.destroyRegionSequence(sequence); controller.destroyMusicalContext(context); controller.endEditing();
