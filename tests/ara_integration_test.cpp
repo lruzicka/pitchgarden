@@ -277,6 +277,10 @@ int main(int argc,char** argv) {
         fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::invalid);
         controller.beginEditing(); regionProps.startInPlaybackTime=20;
         controller.updatePlaybackRegionProperties(region,&regionProps); controller.endEditing();
+        CHECK(preview->submit(request));
+        preview->removePlaybackRegion(region); preview->addPlaybackRegion(region);
+        fill(); previewProcessor.processBlock(audio,midi); unchanged();
+        CHECK(preview->getStatus()==NoteAuditionStatus::invalid);
         CHECK(preview->submit(request)); controller.enableAudioSourceSamplesAccess(ref,false);
         fill(); previewProcessor.processBlock(audio,midi); unchanged(); CHECK(preview->getStatus()==NoteAuditionStatus::invalid);
         CHECK(host.startRequests==starts && host.stopRequests==stops && host.positionRequests==positions && host.cycleRequests==cycles);
@@ -307,9 +311,10 @@ int main(int argc,char** argv) {
     // Render screenshot from the same immutable model without a live host GUI.
     PitchRegionDisplay display{"Stereo test",{12,.2,.5,.5},source->snapshot(),true};
     PitchEditor editor([&] { return std::vector<PitchRegionDisplay>{display}; },[] { return pg::TransportSnapshot{12.2,true,true,true}; }); editor.setSize(1000,560);
-    juce::ToggleButton* follow=nullptr; juce::TextButton* fit=nullptr;
+    juce::ToggleButton* follow=nullptr; juce::ToggleButton* diagnostics=nullptr; juce::TextButton* fit=nullptr;
     for(auto* child:editor.getChildren()) if(auto* button=dynamic_cast<juce::Button*>(child)) {
         CHECK(!button->getWantsKeyboardFocus());
+        if(button->getButtonText()=="Diagnostics") diagnostics=dynamic_cast<juce::ToggleButton*>(button);
         if(button->getButtonText()=="Follow") follow=dynamic_cast<juce::ToggleButton*>(button);
         if(button->getButtonText()=="Fit") fit=dynamic_cast<juce::TextButton*>(button);
     }
@@ -320,9 +325,37 @@ int main(int argc,char** argv) {
         &editor,&editor,{},mousePosition,{},1,false);
     juce::MouseWheelDetails wheel; wheel.deltaY=.1f; editor.mouseWheelMove(wheelEvent,wheel);
     CHECK(!follow->getToggleState()); fit->onClick();
+    CHECK(diagnostics!=nullptr); diagnostics->setToggleState(true,juce::dontSendNotification); editor.mouseMove(wheelEvent);
     auto image=editor.createComponentSnapshot(editor.getLocalBounds());
     auto outputImage=juce::File::getCurrentWorkingDirectory().getChildFile("pitchgarden-piano-roll.png"); outputImage.deleteFile();
     if(auto stream=outputImage.createOutputStream()) juce::PNGImageFormat().writeImageToStream(image,*stream);
+    int heldStarts=0,heldStops=0;
+    {
+        const auto original=display.analysis.result;
+        const auto noteCount=original->notes.size(); const auto originalPitch=original->notes[0].continuousMidi;
+        PitchEditor held([&] { return std::vector<PitchRegionDisplay>{display}; },{},
+            {[] { return true; },[&](const auto& r,const auto& n) {
+                CHECK(r.analysis.result==original && n.midiNote==57);
+                const auto interval=pg::auditionInterval(r.mapping,n.start,n.end);
+                CHECK(interval && interval->start==.2 && interval->end<=.7);
+                ++heldStarts; return true;
+            },[&] { ++heldStops; },{}});
+        held.setSize(1000,560);
+        const juce::Point<float> point{500,426};
+        const juce::MouseEvent press(juce::Desktop::getInstance().getMainMouseSource(),point,
+            juce::ModifierKeys::leftButtonModifier,1,0,0,0,0,&held,&held,{},point,{},1,false);
+        const auto outside=press.withNewPosition(juce::Point<float>{-20,-20});
+        held.mouseDown(press); CHECK(heldStarts==1 && heldStops==0);
+        held.mouseUp(outside); CHECK(heldStops==1);
+        held.mouseUp(outside); CHECK(heldStops==1); // idempotent cancellation
+        held.mouseDown(press); held.mouseDown(press); CHECK(heldStarts==3 && heldStops==2);
+        held.mouseUp(outside); CHECK(heldStops==3);
+        held.mouseDown(press); held.setEnabled(false); CHECK(heldStops==4);
+        held.setEnabled(true); held.mouseDown(press); CHECK(heldStarts==5);
+        CHECK(original->notes.size()==noteCount && original->notes[0].continuousMidi==originalPitch);
+        // Closing with the button still held must stop the final voice.
+    }
+    CHECK(heldStarts==5 && heldStops==5);
     controller.enableAudioSourceSamplesAccess(ref,false);
     controller.beginEditing(); controller.destroyPlaybackRegion(region); controller.destroyAudioModification(mod);
     controller.destroyAudioSource(ref); controller.destroyRegionSequence(sequence); controller.destroyMusicalContext(context); controller.endEditing();
