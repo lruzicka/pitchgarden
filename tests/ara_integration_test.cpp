@@ -50,7 +50,7 @@ bool wait(AnalyzedSource& source) {
     while(source.snapshot().state==pg::AnalysisState::analyzing && std::chrono::steady_clock::now()<until) std::this_thread::yield();
     return source.snapshot().state==pg::AnalysisState::ready;
 }
-int main() {
+int main(int argc,char** argv) {
     juce::ScopedJuceInitialiser_GUI gui;
     { // Non-ARA fallback, including hosts without a playhead, preserves dry input.
         PitchGardenProcessor processor;
@@ -96,6 +96,28 @@ int main() {
             CHECK(editor.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey))); CHECK(host.stopRequests==1);
             CHECK(!editor.keyPressed(juce::KeyPress('x')));
             CHECK(host.positionRequests==0 && host.cycleRequests==0);
+            // Opt-in native peer dispatch test; creates only our own test window.
+            if(argc>1 && std::string(argv[1])=="--native-keys") {
+                juce::Component wrapper;
+                wrapper.setSize(1000,560); wrapper.addAndMakeVisible(editor);
+                wrapper.addToDesktop(0); wrapper.setVisible(true);
+                juce::Component::unfocusAllComponents();
+                editor.keyStateChanged(false);
+                const auto stops=host.stopRequests;
+                CHECK(wrapper.getPeer()!=nullptr);
+                CHECK(wrapper.getPeer()->handleKeyPress(juce::KeyPress(juce::KeyPress::spaceKey)));
+                CHECK(host.stopRequests==stops+1);
+                CHECK(!wrapper.getPeer()->handleKeyPress(juce::KeyPress('x')));
+                // A lost key-up must not leave the fallback latched. Peer
+                // dispatch does not alter physical key state; this exercises
+                // the watchdog's stale-latch branch, not real OS focus loss.
+                wrapper.getPeer()->handleFocusLoss();
+                juce::Timer::callAfterDelay(100,[] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+                juce::MessageManager::getInstance()->runDispatchLoop();
+                CHECK(wrapper.getPeer()->handleKeyPress(juce::KeyPress(juce::KeyPress::spaceKey)));
+                CHECK(host.stopRequests==stops+2);
+                wrapper.removeFromDesktop();
+            }
         }
         processor.releaseResources(); processor.setPlayHead(nullptr);
     }

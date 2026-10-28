@@ -242,7 +242,7 @@ private:
 #include "PitchEditor.h"
 
 class PitchGardenProcessorEditor final : public AudioProcessorEditor,
-                                        private AudioProcessorEditorARAExtension {
+                                        private AudioProcessorEditorARAExtension, private KeyListener, private Timer {
 public:
     explicit PitchGardenProcessorEditor(PitchGardenProcessorBase& processorIn)
         : AudioProcessorEditor(&processorIn),AudioProcessorEditorARAExtension(&processorIn),
@@ -254,8 +254,23 @@ public:
              [this] { return previewStatus(); }}) {
         setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
         addAndMakeVisible(piano); setResizable(true,false); setResizeLimits(480,260,2400,1600); setSize(1000,560);
+        startTimerHz(30);
     }
-    ~PitchGardenProcessorEditor() override { if(audition) audition->stop(); }
+    ~PitchGardenProcessorEditor() override {
+        stopTimer();
+        if(keyTarget) keyTarget->removeKeyListener(this);
+        if(audition) audition->stop();
+    }
+    void parentHierarchyChanged() override {
+        if(keyTarget) keyTarget->removeKeyListener(this);
+        keyTarget=nullptr; spaceHeld=false;
+        // With no logical JUCE focus, ComponentPeer targets the native VST3
+        // content wrapper, not its editor child. Listen on that wrapper using
+        // JUCE's supported, window-local API; do not take native focus.
+        if(auto* top=getTopLevelComponent(); top!=this) {
+            keyTarget=top; keyTarget->addKeyListener(this);
+        }
+    }
     void resized() override { piano.setBounds(getLocalBounds()); }
     bool keyPressed(const KeyPress& key) override {
         if(key.getKeyCode()!=KeyPress::spaceKey || key.getModifiers().isAnyModifierKeyDown()) return false;
@@ -272,6 +287,15 @@ public:
     void focusLost(FocusChangeType) override { spaceHeld=false; }
     AudioProcessorEditorARAExtension* getARAClientExtensions() override { return this; }
 private:
+    void timerCallback() override {
+        // The native wrapper can own focus without the editor receiving a
+        // focusLost callback. Clear repeat state after a lost release or while
+        // our own peer is unfocused; never grab focus or intercept host keys.
+        const auto* peer=getPeer();
+        if(peer==nullptr || !peer->isFocused() || !KeyPress::isKeyCurrentlyDown(KeyPress::spaceKey)) spaceHeld=false;
+    }
+    bool keyPressed(const KeyPress& key,Component*) override { return keyPressed(key); }
+    bool keyStateChanged(bool down,Component*) override { return keyStateChanged(down); }
     bool preview(const PitchRegionDisplay& region,const pg::Note& note) {
         previewFailure={};
         const auto interval=pg::auditionInterval(region.mapping,note.start,note.end);
@@ -326,6 +350,7 @@ private:
     String previewFailure;
     PitchEditor piano;
     bool spaceHeld=false;
+    Component::SafePointer<Component> keyTarget;
 };
 class PitchGardenProcessor final : public PitchGardenProcessorBase {
 public:
