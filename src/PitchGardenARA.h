@@ -25,6 +25,7 @@
 #include "PitchGardenPlayback.h"
 #include "TransportState.h"
 #include "PitchGardenAudition.h"
+#include "ReaperCursorControl.h"
 
 class PitchGardenDocumentController final : public ARADocumentControllerSpecialisation,
                                                             private ProcessingLockInterface
@@ -224,6 +225,8 @@ public:
     AudioProcessorARAExtension* getARAClientExtensions() override { return this; }
 
     pg::TransportState transport;
+    pg::ReaperCursorControl cursorControl;
+    VST3ClientExtensions* getVST3ClientExtensions() override { return &cursorControl; }
     PitchGardenAudition* auditionRenderer() const { return getEditorRenderer<PitchGardenAudition>(); }
 
 private:
@@ -246,12 +249,13 @@ class PitchGardenProcessorEditor final : public AudioProcessorEditor,
 public:
     explicit PitchGardenProcessorEditor(PitchGardenProcessorBase& processorIn)
         : AudioProcessorEditor(&processorIn),AudioProcessorEditorARAExtension(&processorIn),
-          transport(processorIn.transport),audition(processorIn.auditionRenderer()),
+          transport(processorIn.transport),cursor(processorIn.cursorControl),audition(processorIn.auditionRenderer()),
           piano([this] { return collect(); },[this] { return transport.read(); },
             {[this] { return audition!=nullptr && audition->isPrepared(); },
              [this](const PitchRegionDisplay& region,const pg::Note& note) { return preview(region,note); },
              [this] { if(audition) audition->stop(); previewFailure={}; },
-             [this] { return previewStatus(); }}) {
+             [this] { return previewStatus(); }},
+            {[this](double seconds) { return cursor.move(seconds); },[this] { return cursor.position(); }}) {
         setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
         addAndMakeVisible(piano); setResizable(true,false); setResizeLimits(480,260,2400,1600); setSize(1000,560);
         startTimerHz(30);
@@ -344,6 +348,7 @@ private:
         return displays;
     }
     pg::TransportState& transport;
+    pg::ReaperCursorControl& cursor;
     PitchGardenAudition* audition=nullptr;
     double previewRequestedAt=0;
     std::uint64_t previewCallbacks=0;

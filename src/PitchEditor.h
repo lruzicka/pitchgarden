@@ -3,6 +3,7 @@
 #include "AnalysisModel.h"
 #include "TransportState.h"
 #include <functional>
+#include <optional>
 
 struct PitchRegionDisplay {
     juce::String name;
@@ -18,11 +19,15 @@ struct PitchAuditionControls {
     std::function<void()> stop;
     std::function<juce::String()> status;
 };
+struct PitchCursorControls {
+    std::function<bool(double)> move;
+    std::function<std::optional<double>()> position;
+};
 // Model values only: no host-owned pointers survive the collection callback.
 class PitchEditor final : public juce::Component, private juce::Timer {
 public:
     explicit PitchEditor(std::function<std::vector<PitchRegionDisplay>()> collect,
-        std::function<pg::TransportSnapshot()> transport={},PitchAuditionControls audition={});
+        std::function<pg::TransportSnapshot()> transport={},PitchAuditionControls audition={},PitchCursorControls cursor={});
     ~PitchEditor() override;
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -36,6 +41,8 @@ public:
 private:
     void timerCallback() override;
     void updateTransport();
+    void updateEditCursor();
+    void moveEditCursor(float pixel);
     void stopHeldAudition();
     void updateDiagnostic(const juce::MouseEvent&);
     void suspendFollow();
@@ -48,6 +55,7 @@ private:
     std::function<pg::TransportSnapshot()> readTransport;
     pg::TransportSnapshot transport;
     PitchAuditionControls audition;
+    PitchCursorControls cursor;
     juce::ToggleButton diagnosticsButton{"Diagnostics"};
     juce::Label auditionStatus;
     juce::ToggleButton followButton{"Follow"};
@@ -55,6 +63,7 @@ private:
     juce::Label help,status;
     double timeStart=0, timeSpan=10, pitchLow=45, pitchSpan=36;
     int selectedRegion=-1,selectedNote=-1;
-    bool fitted=false, auditionHeld=false;
+    bool fitted=false, auditionHeld=false,rulerDragging=false,cursorUnavailable=false;
+    std::optional<double> editCursor;
     juce::String detail,diagnostic;
 };

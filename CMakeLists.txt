@@ -65,6 +65,8 @@ if(PITCHGARDEN_BUILD_PLUGIN)
     IS_SYNTH FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
   juce_generate_juce_header(PitchGardenARA)
+  target_include_directories(PitchGardenARA PRIVATE
+    "${JUCE_DIR}/modules/juce_audio_processors_headless/format_types/VST3_SDK")
   target_sources(PitchGardenARA PRIVATE src/ARAEntry.cpp src/ARAAnalysisBridge.cpp src/PitchEditor.cpp)
   target_compile_definitions(PitchGardenARA PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
   target_link_libraries(PitchGardenARA PRIVATE
@@ -81,6 +83,14 @@ if(PITCHGARDEN_BUILD_PLUGIN)
     target_compile_definitions(pitchgarden_ara_test PRIVATE
       $<TARGET_PROPERTY:PitchGardenARA,COMPILE_DEFINITIONS>)
     target_link_libraries(pitchgarden_ara_test PRIVATE PitchGardenARA pitchgarden_core)
+    add_executable(pitchgarden_cursor_test tests/reaper_cursor_test.cpp
+      "${JUCE_DIR}/modules/juce_audio_plugin_client/juce_audio_plugin_client_ARA.cpp")
+    target_include_directories(pitchgarden_cursor_test PRIVATE
+      $<TARGET_PROPERTY:PitchGardenARA,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(pitchgarden_cursor_test PRIVATE
+      $<TARGET_PROPERTY:PitchGardenARA,COMPILE_DEFINITIONS>)
+    target_link_libraries(pitchgarden_cursor_test PRIVATE PitchGardenARA)
+    add_test(NAME reaper_cursor_api COMMAND pitchgarden_cursor_test)
     add_test(NAME ara_integration COMMAND pitchgarden_ara_test)
     set_tests_properties(ara_integration PROPERTIES TIMEOUT 30)
   endif()

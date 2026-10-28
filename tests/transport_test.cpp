@@ -23,6 +23,11 @@ int main() {
     CHECK(pg::projectSamplePosition(123,{},48000)==123);
     CHECK(!pg::projectSamplePosition({},{},48000));
     CHECK(!pg::projectSamplePosition({},1e300,48000));
+    CHECK(pg::projectTimeAtPixel(200,100,400,12,4)==13);
+    CHECK(pg::projectTimeAtPixel(-20,100,400,12,4)==12);
+    CHECK(pg::projectTimeAtPixel(800,100,400,12,4)==16);
+    CHECK(!pg::projectTimeAtPixel(200,100,0,12,4));
+    CHECK(!pg::projectTimeAtPixel(std::numeric_limits<double>::quiet_NaN(),100,400,12,4));
     pg::RegionMapping region{12,3,5,5};
     const auto interval=pg::auditionInterval(region,1,4); CHECK(interval && interval->start==3 && interval->end==4);
     CHECK(!pg::auditionInterval(region,0,2));
