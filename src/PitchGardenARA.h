@@ -27,7 +27,7 @@
 #include "PitchGardenAudition.h"
 #include "ReaperCursorControl.h"
 
-class PitchGardenDocumentController final : public ARADocumentControllerSpecialisation,
+class PitchGardenDocumentController : public ARADocumentControllerSpecialisation,
                                                             private ProcessingLockInterface
 {
 public:

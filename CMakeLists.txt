@@ -74,6 +74,29 @@ if(PITCHGARDEN_BUILD_PLUGIN)
     juce::juce_audio_utils
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+  juce_add_plugin(PitchGardenMIDI
+    VERSION 0.1.0
+    COMPANY_NAME "PitchGarden"
+    BUNDLE_ID "org.pitchgarden.midi"
+    PLUGIN_MANUFACTURER_CODE PtGn
+    PLUGIN_CODE PgM1
+    PRODUCT_NAME "PitchGarden MIDI"
+    FORMATS VST3
+    IS_ARA_EFFECT TRUE
+    ARA_FACTORY_ID "\"org.pitchgarden.midi.arafactory.0.1.0\""
+    ARA_DOCUMENT_ARCHIVE_ID "\"org.pitchgarden.midi.aradocumentarchive.1\""
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    IS_SYNTH FALSE
+    COPY_PLUGIN_AFTER_BUILD FALSE)
+  juce_generate_juce_header(PitchGardenMIDI)
+  target_include_directories(PitchGardenMIDI PRIVATE
+    "${JUCE_DIR}/modules/juce_audio_processors_headless/format_types/VST3_SDK")
+  target_sources(PitchGardenMIDI PRIVATE src/MidiEntry.cpp src/ARAAnalysisBridge.cpp)
+  target_compile_definitions(PitchGardenMIDI PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
+  target_link_libraries(PitchGardenMIDI PRIVATE pitchgarden_core juce::juce_audio_utils
+    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
   option(PITCHGARDEN_BUILD_PLUGIN_TESTS "Build in-process ARA integration regression test" ON)
   if(PITCHGARDEN_BUILD_PLUGIN_TESTS)
     add_executable(pitchgarden_ara_test tests/ara_integration_test.cpp
