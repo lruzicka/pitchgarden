@@ -21,27 +21,37 @@ PitchEditor::PitchEditor(std::function<std::vector<PitchRegionDisplay>()> fn,
     std::function<pg::TransportSnapshot()> position,PitchAuditionControls preview)
     : collect(std::move(fn)),readTransport(std::move(position)),audition(std::move(preview)) {
     setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
-    for(auto* button:{&auditionButton,&stopAuditionButton}) {
-        addAndMakeVisible(button); button->setWantsKeyboardFocus(false); button->setMouseClickGrabsKeyboardFocus(false);
-    }
+    addAndMakeVisible(diagnosticsButton);
+    diagnosticsButton.setWantsKeyboardFocus(false); diagnosticsButton.setMouseClickGrabsKeyboardFocus(false);
+    diagnosticsButton.setTooltip("Hover over the pitch curve: source time, original YIN, accepted pitch and note median");
+    diagnosticsButton.onClick=[this] { repaint(); };
     addAndMakeVisible(auditionStatus); auditionStatus.setFont(FontOptions(12.f));
-    auditionButton.onClick=[this] {
-        if(selectedRegion>=0 && selectedNote>=0 && audition.start)
-            audition.start(regions[std::size_t(selectedRegion)],regions[std::size_t(selectedRegion)].analysis.result->notes[std::size_t(selectedNote)]);
-    };
-    stopAuditionButton.onClick=[this] { if(audition.stop) audition.stop(); };
     addAndMakeVisible(followButton); followButton.setToggleState(false,dontSendNotification);
     followButton.setWantsKeyboardFocus(false); followButton.setMouseClickGrabsKeyboardFocus(false);
     followButton.setTooltip("Follow host playback. Manual scrolling/zoom suspends Follow.");
     fitButton.setWantsKeyboardFocus(false); fitButton.setMouseClickGrabsKeyboardFocus(false);
     addAndMakeVisible(fitButton); fitButton.onClick=[this] { suspendFollow(); fit(); repaint(); };
-    addAndMakeVisible(help); help.setText("Wheel: time  |  Shift: pitch  |  Ctrl: time zoom  |  Ctrl+Shift: pitch zoom  |  Click: select",dontSendNotification);
+    addAndMakeVisible(help); help.setText("Wheel: time  |  Shift: pitch  |  Ctrl: time zoom  |  Ctrl+Shift: pitch zoom  |  Hold note: audition",dontSendNotification);
     help.setFont(FontOptions(12.f));
     addAndMakeVisible(status); status.setFont(FontOptions(13.f));
     startTimerHz(30); timerCallback();
 }
+PitchEditor::~PitchEditor() { stopTimer(); stopHeldAudition(); }
+void PitchEditor::stopHeldAudition() {
+    if(!auditionHeld) return;
+    auditionHeld=false;
+    if(audition.stop) audition.stop();
+}
+void PitchEditor::mouseUp(const MouseEvent&) { stopHeldAudition(); }
+void PitchEditor::mouseDrag(const MouseEvent& e) {
+    if(!e.mods.isLeftButtonDown()) stopHeldAudition();
+    updateDiagnostic(e);
+}
+void PitchEditor::mouseMove(const MouseEvent& e) { updateDiagnostic(e); }
+void PitchEditor::visibilityChanged() { if(!isShowing()) stopHeldAudition(); }
+void PitchEditor::enablementChanged() { if(!isEnabled()) stopHeldAudition(); }
 void PitchEditor::resized() {
-    fitButton.setBounds(8,6,48,26); followButton.setBounds(62,6,78,26); auditionButton.setBounds(142,6,76,26); stopAuditionButton.setBounds(224,6,100,26); help.setBounds(332,4,getWidth()-340,28);
+    fitButton.setBounds(8,6,48,26); followButton.setBounds(62,6,78,26); diagnosticsButton.setBounds(142,6,108,26); help.setBounds(258,4,getWidth()-266,28);
     status.setBounds(8,34,getWidth()-16,24); auditionStatus.setBounds(8,58,getWidth()-16,24);
 }
 float PitchEditor::x(double time) const { return float(left+(time-timeStart)/timeSpan*(getWidth()-left)); }
@@ -83,14 +93,17 @@ void PitchEditor::updateTransport() {
 }
 void PitchEditor::timerCallback() {
     updateTransport();
-    const bool previewAvailable=audition.available && audition.available();
-    auditionButton.setEnabled(previewAvailable && !transport.playing && selectedRegion>=0 && selectedNote>=0);
-    stopAuditionButton.setEnabled(previewAvailable);
+    // JUCE captures a drag's mouse-up even outside the component. Also poll
+    // native button state for lost capture/cancellation and window deactivation.
+    if(auditionHeld && (!ModifierKeys::getCurrentModifiersRealtime().isLeftButtonDown()
+        || !isShowing() || !isEnabled() || !Process::isForegroundProcess() || transport.playing
+        || !audition.available || !audition.available())) stopHeldAudition();
     const auto previewStatus=audition.status ? audition.status() : String("Audition unavailable: no ARA editor-renderer role");
-    auditionStatus.setText(previewStatus,dontSendNotification); auditionButton.setTooltip(previewStatus);
+    auditionStatus.setText(previewStatus,dontSendNotification);
     auto next=collect(); bool changed=next.size()!=regions.size();
     if(!changed) for(std::size_t i=0;i<next.size();++i) if(!same(next[i],regions[i])) { changed=true; break; }
     if(!changed) return;
+    stopHeldAudition();
     bool refit=next.size()!=regions.size();
     if(!refit) for(std::size_t i=0;i<next.size();++i) {
         const auto& a=next[i]; const auto& b=regions[i];
@@ -100,7 +113,7 @@ void PitchEditor::timerCallback() {
             || (a.analysis.result && a.analysis.result!=b.analysis.result)) { refit=true; break; }
     }
     if(refit) fitted=false;
-    if(refit) { selectedRegion=selectedNote=-1; detail={}; }
+    if(refit) { selectedRegion=selectedNote=-1; detail={}; diagnostic={}; }
     regions=std::move(next);
     bool ready=false; String text=regions.empty() ? "Waiting for ARA audio source / region selection" : String{};
     for(auto& r:regions) {
@@ -193,13 +206,21 @@ void PitchEditor::paint(Graphics& g) {
         g.drawVerticalLine(int(cursorX),float(top),float(getHeight()-bottom));
         Path marker; marker.addTriangle(cursorX-4,float(top-5),cursorX+4,float(top-5),cursorX,float(top)); g.fillPath(marker);
     }
+    if(diagnosticsButton.getToggleState() && diagnostic.isNotEmpty()) {
+        const Rectangle<int> overlay(left+8,top+8,std::max(1,getWidth()-left-16),52);
+        g.setColour(Colour(0xee111820)); g.fillRect(overlay);
+        g.setColour(Colours::white);
+        g.drawFittedText(diagnostic,overlay.reduced(6,4),Justification::centredLeft,2,.7f);
+    }
     g.setColour(Colours::lightgrey);
     const String transportText=transport.available ? (transport.playing ? "Playing " : "Stopped ")+String(transport.projectSeconds,3)+" s"+(transport.looping ? " (loop)" : "") : "Host position unavailable";
     const String ranges="Time "+String(timeStart,2)+"–"+String(timeStart+timeSpan,2)+" s   |   MIDI "+String(pitchLow,1)+"–"+String(pitchLow+pitchSpan,1);
     g.drawText(transportText+"   |   "+(detail.isNotEmpty() ? detail+"   |   "+ranges : ranges),8,getHeight()-bottom+3,getWidth()-16,bottom-4,Justification::left);
 }
 void PitchEditor::mouseDown(const MouseEvent& e) {
-    if(e.y<top || e.x<left) return;
+    if(!e.mods.isLeftButtonDown()) return;
+    stopHeldAudition();
+    if(e.y<top || e.x<left || !isEnabled()) return;
     selectedRegion=selectedNote=-1; detail={};
     const double timeline=timeStart+(e.x-left)*timeSpan/std::max(1,getWidth()-left);
     for(std::size_t r=0;r<regions.size();++r) {
@@ -210,10 +231,35 @@ void PitchEditor::mouseDown(const MouseEvent& e) {
             selectedRegion=int(r); selectedNote=int(n-notes.begin());
             detail=pitchName(n->midiNote)+"   MIDI "+String(n->continuousMidi,3)+"   "+String(n->cents,1)+" cents   "
                 +String(440*std::pow(2.,(n->continuousMidi-69)/12),2)+" Hz   confidence "+String(n->confidence,2);
+            if(!transport.playing && audition.available && audition.available() && audition.start)
+                auditionHeld=audition.start(region,*n);
             break;
         }
     }
+    updateDiagnostic(e);
     repaint();
+}
+void PitchEditor::updateDiagnostic(const MouseEvent& e) {
+    if(!diagnosticsButton.getToggleState() || e.x<left || e.y<top) return;
+    diagnostic={};
+    const double timeline=timeStart+(e.x-left)*timeSpan/std::max(1,getWidth()-left);
+    for(const auto& region:regions) {
+        if(!region.supported || !region.analysis.result) continue;
+        const double source=region.mapping.toSource(timeline);
+        if(source<region.mapping.sourceStart || source>region.mapping.sourceStart+region.mapping.sourceDuration) continue;
+        const auto& result=*region.analysis.result;
+        auto frame=std::lower_bound(result.frames.begin(),result.frames.end(),source,[](const auto& f,double t) { return f.seconds<t; });
+        if(frame!=result.frames.begin() && (frame==result.frames.end() || source-(frame-1)->seconds<frame->seconds-source)) --frame;
+        if(frame==result.frames.end()) continue;
+        const auto& p=frame->pitch;
+        diagnostic="src "+String(frame->seconds,3)+"s raw "+String(p.rawHz,2)+"Hz MIDI "+String(p.rawMidi,3)
+            +" conf "+String(p.rawConfidence,2)+"\naccepted MIDI "+String(p.midi,3)+" conf "+String(p.confidence,2)
+            +(p.octaveCorrected ? " [octave]" : "");
+        const auto note=std::lower_bound(result.notes.begin(),result.notes.end(),frame->seconds,[](const auto& n,double t) { return n.end<t; });
+        if(note!=result.notes.end() && note->start<=frame->seconds) diagnostic+=" note "+String(note->continuousMidi,3);
+        break;
+    }
+    repaint(left,top,getWidth()-left,70);
 }
 void PitchEditor::mouseWheelMove(const MouseEvent& e,const MouseWheelDetails& wheel) {
     suspendFollow();

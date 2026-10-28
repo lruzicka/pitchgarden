@@ -23,13 +23,21 @@ class PitchEditor final : public juce::Component, private juce::Timer {
 public:
     explicit PitchEditor(std::function<std::vector<PitchRegionDisplay>()> collect,
         std::function<pg::TransportSnapshot()> transport={},PitchAuditionControls audition={});
+    ~PitchEditor() override;
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void visibilityChanged() override;
+    void enablementChanged() override;
     void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails&) override;
 private:
     void timerCallback() override;
     void updateTransport();
+    void stopHeldAudition();
+    void updateDiagnostic(const juce::MouseEvent&);
     void suspendFollow();
     void fit();
     float x(double time) const;
@@ -40,13 +48,13 @@ private:
     std::function<pg::TransportSnapshot()> readTransport;
     pg::TransportSnapshot transport;
     PitchAuditionControls audition;
-    juce::TextButton auditionButton{"Audition"},stopAuditionButton{"Stop preview"};
+    juce::ToggleButton diagnosticsButton{"Diagnostics"};
     juce::Label auditionStatus;
     juce::ToggleButton followButton{"Follow"};
     juce::TextButton fitButton{"Fit"};
     juce::Label help,status;
     double timeStart=0, timeSpan=10, pitchLow=45, pitchSpan=36;
     int selectedRegion=-1,selectedNote=-1;
-    bool fitted=false;
-    juce::String detail;
+    bool fitted=false, auditionHeld=false;
+    juce::String detail,diagnostic;
 };

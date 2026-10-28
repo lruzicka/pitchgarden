@@ -114,11 +114,15 @@ private:
     void invalidate() { enabled.store(false); status.store(NoteAuditionStatus::invalid); }
     void willAddPlaybackRegion(ARA::PlugIn::PlaybackRegion*) noexcept override { assignments.beginWrite(); }
     void didAddPlaybackRegion(ARA::PlugIn::PlaybackRegion*) noexcept override { assignments.endWrite(); }
-    void willRemovePlaybackRegion(ARA::PlugIn::PlaybackRegion*) noexcept override { assignments.beginWrite(); }
+    void willRemovePlaybackRegion(ARA::PlugIn::PlaybackRegion*) noexcept override {
+        assignments.beginWrite(); invalidate();
+    }
     void didRemovePlaybackRegion(ARA::PlugIn::PlaybackRegion*) noexcept override { assignments.endWrite(); }
     void willAddRegionSequence(ARA::PlugIn::RegionSequence*) noexcept override { assignments.beginWrite(); }
     void didAddRegionSequence(ARA::PlugIn::RegionSequence*) noexcept override { assignments.endWrite(); }
-    void willRemoveRegionSequence(ARA::PlugIn::RegionSequence*) noexcept override { assignments.beginWrite(); }
+    void willRemoveRegionSequence(ARA::PlugIn::RegionSequence*) noexcept override {
+        assignments.beginWrite(); invalidate();
+    }
     void didRemoveRegionSequence(ARA::PlugIn::RegionSequence*) noexcept override { assignments.endWrite(); }
     ProcessingLockInterface& lock;
     pg::RenderGate assignments,requestGate;

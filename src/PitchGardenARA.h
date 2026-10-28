@@ -310,7 +310,7 @@ private:
         if(!audition->isPrepared()) return "Audition waiting for host editor-renderer preparation";
         if(previewFailure.isNotEmpty()) return previewFailure;
         switch(audition->getStatus()) {
-            case NoteAuditionStatus::idle: return "Select a note, then Audition (original audio; host transport stays unchanged)";
+            case NoteAuditionStatus::idle: return "Hold left mouse on a note to audition original audio; release to stop";
             case NoteAuditionStatus::queued:
                 if(audition->callbackCount()==previewCallbacks && Time::getMillisecondCounterHiRes()-previewRequestedAt>1000)
                     return "Host has not rendered the ARA preview; stopped audition may be unavailable";
