@@ -5,9 +5,10 @@ import pathlib
 import re
 import sys
 build = pathlib.Path(sys.argv[1])
+config = sys.argv[2] if len(sys.argv) > 2 else "Release"
 identities = []
 for target, name in (("PitchGardenARA", "PitchGarden"), ("PitchGardenMIDI", "PitchGarden MIDI")):
-    root = build / f"{target}_artefacts" / "Release" / "VST3" / f"{name}.vst3"
+    root = build / f"{target}_artefacts" / config / "VST3" / f"{name}.vst3"
     # Steinberg's manifest writer emits trailing commas in the pinned SDK.
     data = json.loads(re.sub(r",\s*([}\]])", r"\1", (root / "Contents/Resources/moduleinfo.json").read_text()))
     assert data["Name"] == name
