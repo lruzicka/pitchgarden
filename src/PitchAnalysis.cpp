@@ -44,6 +44,7 @@ std::vector<PitchFrame> analyzeSource(double sr, std::int64_t count, const MonoR
         result.push_back({frameTime(pos,window,sr),pitch});
         if (progress) progress(float(double(pos+static_cast<std::int64_t>(window))/double(count)));
     }
+    confirmOctaveCorrections(result,double(cfg.hop)/sr);
     return result;
 }
 }

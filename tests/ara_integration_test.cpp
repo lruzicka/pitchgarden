@@ -6,7 +6,7 @@
 #include <iostream>
 #include <thread>
 #define CHECK(x) do { if(!(x)) { std::cerr << __LINE__ << ": " #x "\n"; std::abort(); } } while(false)
-struct TestAudioData { double rate=48000; int channels=1; double hz=440; double duration=10; };
+struct TestAudioData { double rate=48000; int channels=1; double hz=440; double duration=10; bool invertedRight=false; double secondAmplitude=0; };
 class Host final : public ARA::Host::AudioAccessControllerInterface,public ARA::Host::ArchivingControllerInterface,public ARA::Host::PlaybackControllerInterface {
 public:
     int startRequests=0,stopRequests=0,positionRequests=0,cycleRequests=0;
@@ -28,7 +28,7 @@ public:
         const auto& source=*reinterpret_cast<const TestAudioData*>(ref);
         for(int c=0;c<source.channels;++c) for(ARA::ARASampleCount i=0;i<n;++i) {
             const double time=double(start+i)/source.rate;
-            static_cast<float*>(dst[c])[i]=time>=0 && time<source.duration ? float(.6*std::sin(2*3.141592653589793*source.hz*time)) : 0.f;
+            static_cast<float*>(dst[c])[i]=time>=0 && time<source.duration ? float((c==1 && source.invertedRight ? -.6 : .6)*std::sin(2*3.141592653589793*source.hz*time)+source.secondAmplitude*std::sin(4*3.141592653589793*source.hz*time)) : 0.f;
         }
         return true;
     }
@@ -133,6 +133,15 @@ int main() {
         CHECK(otherSource->snapshot().result!=source->snapshot().result);
         CHECK(std::abs(otherSource->snapshot().result->notes[0].continuousMidi-pg::frequencyToMidi(660))<.1);
         CHECK(std::abs(source->snapshot().result->notes[0].continuousMidi-69)<.1);
+        otherController.enableAudioSourceSamplesAccess(otherRef,false);
+        // Cancelling only the fundamental used to leave the common second
+        // harmonic at 392 Hz. Validate the real ARA bridge at 44.1 kHz too.
+        otherData={44100,2,196,1,true,.65};
+        otherProps.sampleRate=44100; otherProps.channelCount=2; otherProps.sampleCount=44100;
+        otherController.beginEditing(); otherController.updateAudioSourceProperties(otherRef,&otherProps); otherController.endEditing();
+        otherController.enableAudioSourceSamplesAccess(otherRef,true); CHECK(wait(*otherSource));
+        CHECK(!otherSource->snapshot().result->notes.empty());
+        CHECK(std::abs(otherSource->snapshot().result->notes[0].continuousMidi-55)<.1);
         otherController.enableAudioSourceSamplesAccess(otherRef,false);
         otherController.beginEditing(); otherController.destroyAudioSource(otherRef); otherController.endEditing();
         otherController.destroyDocumentController(); CHECK(otherHost.readers.load()==0);
@@ -255,9 +264,10 @@ int main() {
     controller.enableAudioSourceSamplesAccess(ref,false);
     CHECK(!source->snapshot().result); CHECK(host.readers.load()==0);
     // Replace source with stereo 96 kHz material and reanalyze independently.
-    controller.beginEditing(); sourceData={96000,2,220,1}; props.sampleRate=96000; props.sampleCount=96000; props.channelCount=2;
+    controller.beginEditing(); sourceData={96000,2,220,1,true}; props.sampleRate=96000; props.sampleCount=96000; props.channelCount=2;
     controller.updateAudioSourceProperties(ref,&props); controller.endEditing();
     controller.enableAudioSourceSamplesAccess(ref,true); CHECK(wait(*source));
+    CHECK(!source->snapshot().result->notes.empty());
     CHECK(std::abs(source->snapshot().result->notes[0].continuousMidi-57)<.1);
     {
         PitchGardenPlayback renderer(source->getDocumentController(),lock);
@@ -269,7 +279,7 @@ int main() {
         pos.setIsPlaying(true); pos.setTimeInSamples(20*48000);
         renderer.processBlock(converted,juce::AudioProcessor::Realtime::no,pos);
         for(int c=0;c<2;++c) for(int i=0;i<512;++i)
-            CHECK(std::abs(converted.getSample(c,i)-float(.6*std::sin(2*3.141592653589793*220*double(19200+2*i)/96000)))<1e-6);
+            CHECK(std::abs(converted.getSample(c,i)-float((c==1 ? -.6 : .6)*std::sin(2*3.141592653589793*220*double(19200+2*i)/96000)))<1e-6);
         renderer.releaseResources(); renderer.removePlaybackRegion(region);
     }
     // Render screenshot from the same immutable model without a live host GUI.
