@@ -8,14 +8,20 @@ namespace pg {
 PitchObservation detectPitch(const float* x, std::size_t n, double sr,
                              double minHz, double maxHz, double threshold)
 {
-    if (!x || sr <= 0 || minHz <= 0 || maxHz <= minHz || n < 32)
+    if (!x || !std::isfinite(sr) || !std::isfinite(minHz) || !std::isfinite(maxHz)
+        || !std::isfinite(threshold) || threshold <= 0 || threshold >= 1
+        || sr <= 0 || minHz <= 0 || maxHz <= minHz || maxHz >= sr / 2 || n < 32)
         return {};
-    const auto lo = std::max<std::size_t>(2, static_cast<std::size_t>(sr / maxHz));
-    const auto hi = std::min<std::size_t>(n / 2 - 1, static_cast<std::size_t>(std::ceil(sr / minHz)));
+    const double lowestLag=std::max(2.,std::floor(sr/maxHz));
+    const double highestLag=std::min(double(n/2-1),std::ceil(sr/minHz));
+    if(!std::isfinite(lowestLag) || lowestLag>=highestLag) return {};
+    const auto lo=static_cast<std::size_t>(lowestLag);
+    const auto hi=static_cast<std::size_t>(highestLag);
     if (lo >= hi) return {};
     double meanSquare = 0.0;
     for (std::size_t i = 0; i < n; ++i) meanSquare += double(x[i]) * x[i];
     meanSquare /= n;
+    if (!std::isfinite(meanSquare)) return {};
     if (meanSquare < 1.0e-7) return {};
 
     std::vector<double> d(hi + 1, 0.0), cmnd(hi + 1, 1.0);
@@ -60,7 +66,7 @@ PitchObservation detectPitch(const float* x, std::size_t n, double sr,
 std::vector<PitchFrame> analyze(const std::vector<float>& audio, double sr,
                                 std::size_t window, std::size_t hop)
 {
-    if (sr <= 0 || window < 32 || hop == 0)
+    if (!std::isfinite(sr) || sr <= 0 || window < 32 || hop == 0)
         throw std::invalid_argument("Invalid analysis settings");
     std::vector<PitchFrame> result;
     for (std::size_t i = 0; i <= audio.size() && window <= audio.size() - i; i += hop) {
